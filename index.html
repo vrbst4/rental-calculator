@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rental Property Calculator — Newbridge Wealth Management</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet">
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: "Montserrat", sans-serif; background: #F5F6FA; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { opacity:1; }
+@media print {
+  .no-print { display:none !important; }
+  .print-only { display:block !important; }
+  body { background:white !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  @page { margin: 0.5in; size: letter; }
+  select, button { display:none !important; }
+  input { border:none !important; background:transparent !important; }
+}
+@media screen { .print-only { display:none !important; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useMemo, useCallback } = React;
+
+// ── Financial Helpers ──
+const PMT = (rate, nper, pv) => {
+  if (rate === 0) return -pv / nper;
+  return (pv * rate * Math.pow(1 + rate, nper)) / (Math.pow(1 + rate, nper) - 1);
+};
+
+const fmt = (v, type = "$") => {
+  if (v === undefined || v === null || isNaN(v)) return "\u2014";
+  if (type === "$") return (v < 0 ? "-" : "") + "$" + Math.abs(Math.round(v)).toLocaleString();
+  if (type === "$d") return (v < 0 ? "-" : "") + "$" + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (type === "%") return (v * 100).toFixed(1) + "%";
+  if (type === "%2") return (v * 100).toFixed(2) + "%";
+  if (type === "x") return v.toFixed(2) + "x";
+  if (type === "n") return v.toFixed(1);
+  return String(v);
+};
+
+// Tax calc now uses calcFedTax — see TAX_DATA above
+
+// ── Colors ──
+const C = {
+  navy: "#1B2A4A", dkBlue: "#2C3E6B", mdBlue: "#3A5BA0", ltBlue: "#D6E4F0",
+  green: "#27AE60", red: "#E74C3C", gold: "#F39C12", white: "#FFF",
+  bg: "#F5F6FA", card: "#FFF", text: "#333", muted: "#8899AA",
+  inputBg: "#FFF9E6", greenBg: "#E8F5E9", redBg: "#FFEBEE", goldBg: "#FFF8E1", softBlue: "#E8F0FE",
+};
+
+// ── Reusable Components ──
+const Inp = ({ label, value, onChange, prefix, suffix, type = "number", step, note, wide }) => (
+  <div style={{ display: "flex", alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${C.ltBlue}22` }}>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 13, color: C.text }}>{label}</div>
+      {note && <div style={{ fontSize: 10, color: C.muted, fontStyle: "italic" }}>{note}</div>}
+    </div>
+    <div style={{ display: "flex", alignItems: "center", gap: 4, background: C.inputBg, borderRadius: 6, padding: "3px 8px", border: `1px solid ${C.gold}44` }}>
+      {prefix && <span style={{ fontSize: 13, color: C.muted }}>{prefix}</span>}
+      <input type={type} step={step || "any"} value={value}
+        onChange={e => onChange(type === "number" ? parseFloat(e.target.value) || 0 : e.target.value)}
+        style={{ width: wide ? 180 : type === "text" ? 160 : 85, background: "transparent", border: "none", outline: "none", textAlign: type === "text" ? "left" : "right", fontSize: 14, fontWeight: 700, color: C.mdBlue, fontFamily: "'Montserrat',sans-serif" }} />
+      {suffix && <span style={{ fontSize: 12, color: C.muted }}>{suffix}</span>}
+    </div>
+  </div>
+);
+
+const Row = ({ label, value, bold, hi, neg }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${C.ltBlue}22` }}>
+    <span style={{ fontSize: 13, color: C.text, fontWeight: bold ? 700 : 400 }}>{label}</span>
+    <span style={{ fontSize: 14, fontWeight: bold ? 700 : 500, color: neg ? C.red : hi ? C.green : C.navy, fontFamily: "'Space Mono',monospace" }}>{value}</span>
+  </div>
+);
+
+const Stat = ({ label, value, color = C.navy, bg = C.ltBlue, sub }) => (
+  <div style={{ background: bg, borderRadius: 12, padding: "14px 16px", textAlign: "center", flex: 1, minWidth: 130 }}>
+    <div style={{ fontSize: 10, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>{label}</div>
+    <div style={{ fontSize: 26, fontWeight: 800, color, fontFamily: "'Space Mono',monospace", margin: "3px 0" }}>{value}</div>
+    {sub && <div style={{ fontSize: 10, color: C.muted }}>{sub}</div>}
+  </div>
+);
+
+const Card = ({ title, children, accent }) => (
+  <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.ltBlue}66`, overflow: "hidden", boxShadow: "0 1px 4px rgba(27,42,74,0.06)" }}>
+    {title && <div style={{ padding: "10px 20px", background: accent || C.navy }}><span style={{ fontSize: 13, fontWeight: 700, color: C.white, textTransform: "uppercase", letterSpacing: 1.5 }}>{title}</span></div>}
+    <div style={{ padding: "10px 20px" }}>{children}</div>
+  </div>
+);
+
+const Tab = ({ active, label, onClick, icon }) => (
+  <button onClick={onClick} className="no-print" style={{ padding: "10px 14px", background: active ? C.white : "transparent", color: active ? C.navy : C.muted, border: "none", borderBottom: active ? `3px solid ${C.mdBlue}` : "3px solid transparent", fontSize: 12, fontWeight: active ? 700 : 500, cursor: "pointer", fontFamily: "'Montserrat',sans-serif", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
+    <span style={{ fontSize: 15 }}>{icon}</span>{label}
+  </button>
+);
+
+const Toggle = ({ label, value, onChange }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0" }}>
+    <span style={{ fontSize: 13 }}>{label}</span>
+    <button onClick={() => onChange(!value)} style={{ padding: "4px 16px", borderRadius: 6, border: "none", background: value ? C.green : C.muted, color: C.white, fontWeight: 700, cursor: "pointer", fontSize: 13 }}>{value ? "Yes" : "No"}</button>
+  </div>
+);
+
+const ScorecardRow = ({ name, value, benchmark, verdict, pass: p }) => (
+  <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.8fr 1.2fr 0.8fr", padding: "7px 12px", background: p ? `${C.green}08` : `${C.red}06`, borderBottom: `1px solid ${C.ltBlue}33`, alignItems: "center" }}>
+    <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{name}</span>
+    <span style={{ fontSize: 14, fontWeight: 700, color: C.navy, textAlign: "center", fontFamily: "'Space Mono',monospace" }}>{value}</span>
+    <span style={{ fontSize: 12, color: C.muted, textAlign: "center" }}>{benchmark}</span>
+    <span style={{ fontSize: 13, fontWeight: 700, color: p ? C.green : C.red, textAlign: "center" }}>{verdict}</span>
+  </div>
+);
+
+
+const TAX_DATA = {
+  2022: { stdDed: { single:12950, mfj:25900, mfs:12950, hoh:19400, qss:25900 }, brackets: { single:[[10275,.10],[41775,.12],[89075,.22],[170050,.24],[215950,.32],[539900,.35],[Infinity,.37]], mfj:[[20550,.10],[83550,.12],[178150,.22],[340100,.24],[431900,.32],[647850,.35],[Infinity,.37]], mfs:[[10275,.10],[41775,.12],[89075,.22],[170050,.24],[215950,.32],[323925,.35],[Infinity,.37]], hoh:[[14650,.10],[55900,.12],[89050,.22],[170050,.24],[215950,.32],[539900,.35],[Infinity,.37]], qss:[[20550,.10],[83550,.12],[178150,.22],[340100,.24],[431900,.32],[647850,.35],[Infinity,.37]] }},
+  2023: { stdDed: { single:13850, mfj:27700, mfs:13850, hoh:20800, qss:27700 }, brackets: { single:[[11000,.10],[44725,.12],[95375,.22],[182100,.24],[231250,.32],[578125,.35],[Infinity,.37]], mfj:[[22000,.10],[89450,.12],[190750,.22],[364200,.24],[462500,.32],[693750,.35],[Infinity,.37]], mfs:[[11000,.10],[44725,.12],[95375,.22],[182100,.24],[231250,.32],[346875,.35],[Infinity,.37]], hoh:[[15700,.10],[59850,.12],[95350,.22],[182100,.24],[231250,.32],[578100,.35],[Infinity,.37]], qss:[[22000,.10],[89450,.12],[190750,.22],[364200,.24],[462500,.32],[693750,.35],[Infinity,.37]] }},
+  2024: { stdDed: { single:14600, mfj:29200, mfs:14600, hoh:21900, qss:29200 }, brackets: { single:[[11600,.10],[47150,.12],[100525,.22],[191950,.24],[243725,.32],[609350,.35],[Infinity,.37]], mfj:[[23200,.10],[94300,.12],[201050,.22],[383900,.24],[487450,.32],[731200,.35],[Infinity,.37]], mfs:[[11600,.10],[47150,.12],[100525,.22],[191950,.24],[243725,.32],[365600,.35],[Infinity,.37]], hoh:[[16550,.10],[63100,.12],[100500,.22],[191950,.24],[243700,.32],[609350,.35],[Infinity,.37]], qss:[[23200,.10],[94300,.12],[201050,.22],[383900,.24],[487450,.32],[731200,.35],[Infinity,.37]] }},
+  2025: { stdDed: { single:15000, mfj:30000, mfs:15000, hoh:22500, qss:30000 }, brackets: { single:[[11925,.10],[48475,.12],[103350,.22],[197300,.24],[250525,.32],[626350,.35],[Infinity,.37]], mfj:[[23850,.10],[96950,.12],[206700,.22],[394600,.24],[501050,.32],[751600,.35],[Infinity,.37]], mfs:[[11925,.10],[48475,.12],[103350,.22],[197300,.24],[250525,.32],[375800,.35],[Infinity,.37]], hoh:[[17000,.10],[64850,.12],[103300,.22],[197300,.24],[250500,.32],[626350,.35],[Infinity,.37]], qss:[[23850,.10],[96950,.12],[206700,.22],[394600,.24],[501050,.32],[751600,.35],[Infinity,.37]] }},
+  2026: { stdDed: { single:15400, mfj:30800, mfs:15400, hoh:23100, qss:30800 }, brackets: { single:[[12250,.10],[49800,.12],[106200,.22],[202800,.24],[257500,.32],[643800,.35],[Infinity,.37]], mfj:[[24500,.10],[99700,.12],[212400,.22],[405600,.24],[515100,.32],[772600,.35],[Infinity,.37]], mfs:[[12250,.10],[49800,.12],[106200,.22],[202800,.24],[257500,.32],[386300,.35],[Infinity,.37]], hoh:[[17500,.10],[66700,.12],[106150,.22],[202800,.24],[257500,.32],[643800,.35],[Infinity,.37]], qss:[[24500,.10],[99700,.12],[212400,.22],[405600,.24],[515100,.32],[772600,.35],[Infinity,.37]] }},
+  2027: { stdDed: { single:15850, mfj:31700, mfs:15850, hoh:23800, qss:31700 }, brackets: { single:[[12600,.10],[51200,.12],[109300,.22],[208700,.24],[264900,.32],[662400,.35],[Infinity,.37]], mfj:[[25200,.10],[102600,.12],[218600,.22],[417400,.24],[529800,.32],[795100,.35],[Infinity,.37]], mfs:[[12600,.10],[51200,.12],[109300,.22],[208700,.24],[264900,.32],[397600,.35],[Infinity,.37]], hoh:[[18000,.10],[68700,.12],[109250,.22],[208700,.24],[264900,.32],[662400,.35],[Infinity,.37]], qss:[[25200,.10],[102600,.12],[218600,.22],[417400,.24],[529800,.32],[795100,.35],[Infinity,.37]] }},
+  2028: { stdDed: { single:16300, mfj:32600, mfs:16300, hoh:24500, qss:32600 }, brackets: { single:[[13000,.10],[52700,.12],[112500,.22],[214800,.24],[272600,.32],[681600,.35],[Infinity,.37]], mfj:[[25900,.10],[105600,.12],[225000,.22],[429700,.24],[545300,.32],[818500,.35],[Infinity,.37]], mfs:[[13000,.10],[52700,.12],[112500,.22],[214800,.24],[272600,.32],[409200,.35],[Infinity,.37]], hoh:[[18500,.10],[70700,.12],[112500,.22],[214800,.24],[272600,.32],[681600,.35],[Infinity,.37]], qss:[[25900,.10],[105600,.12],[225000,.22],[429700,.24],[545300,.32],[818500,.35],[Infinity,.37]] }},
+  2029: { stdDed: { single:16800, mfj:33600, mfs:16800, hoh:25200, qss:33600 }, brackets: { single:[[13400,.10],[54300,.12],[115900,.22],[221200,.24],[280600,.32],[701800,.35],[Infinity,.37]], mfj:[[26700,.10],[108700,.12],[231700,.22],[442400,.24],[561500,.32],[842500,.35],[Infinity,.37]], mfs:[[13400,.10],[54300,.12],[115900,.22],[221200,.24],[280600,.32],[421300,.35],[Infinity,.37]], hoh:[[19100,.10],[72800,.12],[115900,.22],[221200,.24],[280600,.32],[701800,.35],[Infinity,.37]], qss:[[26700,.10],[108700,.12],[231700,.22],[442400,.24],[561500,.32],[842500,.35],[Infinity,.37]] }},
+  2030: { stdDed: { single:17300, mfj:34600, mfs:17300, hoh:25900, qss:34600 }, brackets: { single:[[13800,.10],[55900,.12],[119400,.22],[227800,.24],[289000,.32],[722600,.35],[Infinity,.37]], mfj:[[27500,.10],[111900,.12],[238500,.22],[455700,.24],[578300,.32],[867800,.35],[Infinity,.37]], mfs:[[13800,.10],[55900,.12],[119400,.22],[227800,.24],[289000,.32],[433900,.35],[Infinity,.37]], hoh:[[19700,.10],[75000,.12],[119400,.22],[227800,.24],[289000,.32],[722600,.35],[Infinity,.37]], qss:[[27500,.10],[111900,.12],[238500,.22],[455700,.24],[578300,.32],[867800,.35],[Infinity,.37]] }},
+};
+const FILING_LABELS = { single:"Single", mfj:"Married Filing Jointly", mfs:"Married Filing Separately", hoh:"Head of Household", qss:"Qualifying Surviving Spouse" };
+const FILING_OPTIONS = ["single","mfj","mfs","hoh","qss"];
+const TAX_YEARS = [2022,2023,2024,2025,2026,2027,2028,2029,2030];
+const calcFedTax = (taxable, year, status) => {
+  if (taxable <= 0) return 0;
+  const yd = TAX_DATA[year] || TAX_DATA[2024];
+  const br = yd.brackets[status] || yd.brackets.mfj;
+  let tax = 0, prev = 0;
+  for (const [limit, rate] of br) { if (taxable <= limit) { tax += (taxable - prev) * rate; break; } tax += (limit - prev) * rate; prev = limit; }
+  return tax;
+};
+const getStdDed = (year, status) => (TAX_DATA[year] || TAX_DATA[2024]).stdDed[status] || 29200;
+
+const grid2 = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 };
+
+// ═══════════════════════════════════════════════════════════════
+
+const NB_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKAAAABXCAYAAACDWE6MAAABCGlDQ1BJQ0MgUHJvZmlsZQAAeJxjYGA8wQAELAYMDLl5JUVB7k4KEZFRCuwPGBiBEAwSk4sLGHADoKpv1yBqL+viUYcLcKakFicD6Q9ArFIEtBxopAiQLZIOYWuA2EkQtg2IXV5SUAJkB4DYRSFBzkB2CpCtkY7ETkJiJxcUgdT3ANk2uTmlyQh3M/Ck5oUGA2kOIJZhKGYIYnBncAL5H6IkfxEDg8VXBgbmCQixpJkMDNtbGRgkbiHEVBYwMPC3MDBsO48QQ4RJQWJRIliIBYiZ0tIYGD4tZ2DgjWRgEL7AwMAVDQsIHG5TALvNnSEfCNMZchhSgSKeDHkMyQx6QJYRgwGDIYMZAKbWPz9HbOBQAAAQx0lEQVR42u2de3BTV37Hf+de+SHZimRjDCFZCBsgjknKq3Qg2SlOw8wC2W3TTg3TEIYMG7JdpizbtDNh0tk43bY0G8azyUKYJrh0YcNOUGJIPKydJQXFwYHUNWCM38T4IfSwLBm9hR73/PqH73WvL9dv2Rby+c5oNAhbPvecz/m9zr3nAKSoEJEAACxatMjY29vrRkQUBIFSShERaSgUwoMHD64FADCZTPwMtI8X39figKj4Hhffq+Q/l6rigImJAcjEAGRiYgAyMQCZmBiATAxAJiYGIBMDkImJAcjEAGRiYgAyMQCZmBiAqS9KKTIAmWYCPAIAEAgEFgAAAQDKAExBEUIgLS0t+QaE4wgAYEZGxvLTp08XEEIQETkGYIpJo9HA/Pnzk3JuAICQkZGhWb58+RZCSEqP06wDUBxQ0Gg08MQTT5BkbSYAgNFo3IqIAAACAzDFQi0AgFgs9ggAwNy5c5MKRPE2fDQajWuqqqqWE0JwJh4bYABO4RgDAGRnZy8EACgqKkpGKy2kp6fzy5Yt2wEAUFxcTBiAKSaDwfBoso9NXl7ei6WlpVrRDRMGYCr4X0o50dKsFT8SknRshAceeOChzZs3Py9mwzwD8D7IM0azFGKpA3Q63WMnTpzIFwc3Wa0L5ufn/wOkaE0wFQFEKcYbrdSh0+myV65cuTaJ+4IHAJqbm7vm4sWLmwgh1Gw2a1JpsFLpYggiwo4dO3TZ2dlZANA3FlDnzJmzBQB+n8zxFSEECgoK/gkAqoqKilJqiS5lLCAicoQQ3L1796sbNmz4HiEEpZrfCNdOsrOzf7B3794MjuPiSQohDwA0Ly/v6bq6uh8QQoRUigW5FIGPAACazWZjQUHBazzP+8cR5C98+eWX/4xSSsxmc1IOLKUUAAAXLlz4S5nXIgzAJLIShBBaWFj4Rn5+fpbT6QyPI16E/Pz8vyWEYLK6N47jOACgc+fOLWxsbPwxIURI1sky6wA0mUw8x3Hx8vLytQaD4aeCICDP82OKbRFRAwA0Jydn87lz5x4HAJpkC/8os4IcANDFixf/8+HDh+cXFRXRkpISdjdTEiQeGgDgHA7H/yAixmIxPHr0aJEUvCt3x0KFBEGIIyLa7fbfiFBOi2UZYXcsREQMh8P3tFXaOaurq+sj2QRiFnAGYz+eEBJvbW39x3nz5v0JAMR4fnz8EEJ40Qpu//zzz1dwHCfM5LorFQO+QCBQY7Va6wAApc/EhERYuHDhtrq6uucJIfH7PSG5bwE0mUw8ISR+/vz5FY888sgvYGA1Y9zXI2bKKN7+9GtEnNF1V47jEAAgLy/PXl9f/3eUUsJxHIp3xYhNJnTp0qXvHz58eD4AMFc8E1kvIvI7d+7M7O/vvyFzTwKldFwuWOnerl279tJ0uLcxbFB5DgCgo6PjpPjvmLKtFoul6n53xffrzOEJIcIbb7zxQU5OzhMAMFFXdE+Qv2TJkl+VlZUt4jguPsMJCUVEUlNT81Ofz2cT3a/cFccffvjhTW1tba+LrljDTNM0qK6uLg0AoLGxca/cMohb7wqIKJSVlT0zDgtIlZbFarVeAoA0RNRM1RrxWLfoBQCoqan5c/H6YuK79POxaDRKr169uhkAINWW6ZLR9WoAAC5durRJzBLj0sCJAxNHRDx27NhTowEYDAZjLpcrpAJhDBHx5s2bR8S/mTaTACJiuuiKjyhdsXg9NBAIeCsrKwunM4ufdZJmd2Vl5SqfzxdARKqwaDHRepW/8soradJADLNJOXq93runTp16LRqNxqTYUfldDQ0Nr00VhOMAUIOIfGFhYbrL5bqi+BkUBEFARPR4PB3l5eX54u+wpGQq4Dt+/Pgyj8djlXe8fEA8Hk/rW2+9ZSCEDA7CcLvkx2IxfO65577b0tLyC/E7ogq3HKeUYkdHxy4ZhGQGAOTFdW44efJkgc/n80mhhrKW2dvbe33fvn1G+fUzJQi+I0eOfLevr69TxQJQRBT8fn/o7NmzK6USzWjHNITDYXzvvffWAgBnt9urVTJNiojxeDyO3d3dP5YsS6JKHuM9pkF6r62t/WEsFpPaeo8H6O/vN5eUlGQSQiBVnyOZdvhOnDix2O1231TCJwXisVgM6+rqnlcM2KjnhJSWlq4jhMDRo0fn9ff3d8qtiRxCRMT29vYDSnimE0B5DNzc3PyqZLXVQgev1/uFyWTSspgwAQnHmTNnnnS73beHgSOGiNjS0rJXWQ8bz0E1AACfffbZH4VCIdcwkEt1tzOlpaW5stiMTCeA8ipAV1fXr1RCh0EInU5n7dtvvz2fZcfjF5E6+csvv3zG6/W6lfBJJQlExKampgNqxdjxAFhZWZkBAPDpp58+4/F47qpAKHdx33711Veb5BNlIiBO4qQkIn1msVg+HAlCr9fbVFFRUXC/F6un0+pxUvB87dq1l/x+f0wl4aCyWX5guM4d71FdkpU4c+bM98VAX2lxB/8djUbRZrP9+p133pk3URAnc1SXuBLEAQBxOBwfjQRhIBBw1tbWbpQlNISRNkK8J9a8DsoGRRU+h8PxSxl8ZLIAykH++uuvV3k8ntsqiYlU7KaIiHfu3HG0tra+unPnTqMcrLEM9GTPiispKZEmK+nt7R0Owrh4Z028p6dnTyJj2JSR2JE8AMDRo0eXOJ3O/1YOtCzbjSMi9vT0/OtoVmeihxVKE+GTTz5Z5HA4/leCUF5zlBe9xfJPV0dHx/6ysrJFKhZdg4i8eJ0kUQDKLCEBALDZbB/KJgxVmzAWi+V3+/fvn5OIGDblrF5DQ8N2n8/nUrM6ogumlFJsbGzcP5LlmyyA8kHfsGFDZnd3d5nSralNCkREv9/v6+np+bi5ufmv3n333blq7eI4TgIzXbSU6yZzWqbMHcOtW7ek1ZK4okg/2E63291RXV39/VltDRGRH7jLHKCsrGyRxWL5SOk2lIMeCoUidXV1L401oJ7sca1S8RcAoL6+fofP5+uVzQdBxS0PgdPv97tsNtsfuru7X79y5cqm06dPP7pmzRqd8u/cvXv38cke1yqHsKWl5XVZ81Rj2Egkgt9+++3hffv2GZWxd0pLLBBLF5rW3t7+kzt37rjVZq080/V6vZbq6uo/HU82l4jzgqXbvqSJ4nQ6T8jqbnEVEKk4yMpJhKFQKOr1eq1ut/ua0+k0u93u093d3eW9vb0X1OK2CZwXLN0dDg0NDcU+ny84QgwriBl9R1NTU7Eifk05EInywqqrq/+it7f3ynBWTxxYQXQZf6iqqnpwvKWERB5YLYfg8uXLW5xO5zeK5saVt9TL3HNMkUiNpkkdWC31UUVFxeq+vr6mEWLYQTBdLtfva2pq1suv975fRUFEYjabNfJncy9cuPCs0+msUnS2asdEIhHs7u7+FynOm8BAJPTEdHmyJLq6v+7r67usAk98hNu+JPctgRlTsZaTPjFdiq23b9/+QGdn5wmlC1azhuFwGG0228mKioq1Sg9w3yQrsgbLO42/dOnSX7pcrs/j8SE3cQgjWL2O8+fPb5G+cyLrr4kGUB5GyCfV1atXN7pcrt8Gg8E7anGhIAhxYUBUsWw2JRZQ3k7Z6slL8lBHxSIPDkwgEKBWq/XjCxcuPKv0AskII0FEzmw2a5QddezYse+0t7f/vcvluq6WjSlcVUwq8HZ2dv7H/v37cyZbvZ8qANUSKQCA8vLyB1tbW39ktVrPyrJ5HMYSxmXWL6Z4RcT3s5PNUuUx7AcffLC4q6vrU0VyN2xpSRAEdLvdX12/fv1laflRCeO0P4uCiERMJDTiE2lD/v/IkSM5DQ0NxQ6H41QgEPAqrEFcZSAG45De3t6r586dS1h5YKoBVCRWQ37/wIEDc65cufLsrVu3fm6328+4XK62YDDYH4lExhwIxmKxrxNVJlGUu7YGAoGWMYBIZRm93WKxHPvmm2+e27Vrl36IBRq49Ys3m80a+V1ICYdtmC8mlZWVhW1tbbudTufHoVDIruxHFVc7BDyv12vt6OjYAwDpiVwumi4AlTHvMFkkf+jQoTlffPHFk52dnevq6+t/ePv27W2hUGib3+8f8vJ4PNsikci2vr6+Z+TXkaCCPwcAcPDgwawbN278u7TkOAqIQwyH1+u1WCyWD5ubm//GZDItHsHyahBxTFASJWxy1yJXRUVFXn19/feam5t/Zrfbf+vz+RqDwaBaPHFPVqi0goFAwNXe3v5v77//fp40kxKZeU03gMPEwqqeIlmK/yaTaXFPT8+RcDgclI+fMomSGY0hYx0MBsMej+fq7du3y9ra2nZfvHhxndJdjwalRraL1JBdQg8dOrSgqKhoMSKuy83NXaHX6x9PS0tbotVqjSrfHxcPWOE4jhtuMDkAAJ/P1+d2u/+ztbX1vS1bttwWTXia+PcTeSYGQURcv349Nw5wEhnTDO5TKD5xJ984c6xETsXOrVR06xwhpBMA9ly/fv3dvLy8n+Xk5GzXarV6pQESN/SUwKXii+h0ukwAWGUwGFYBwI+WLFkCq1atcu/atastFArd8Pl811wu1/Xa2tp2Qkg/AMSV7luDiFBeXp6/YMGCQoPBsNpgMKzMzMx8MiMj49GsrCz9MB0rSB0rNW44qwkAGI1GBY/HU2+1Wv9r9erVxwEgKBt0IITEpnDSh2D0DSulDknpU4mGg3vFihVtAPCTkpKSnxcXF+9+6KGHtuv1+gKe5zmVycLB/z/Oi5RS5DiOiqDyWVlZcwDgKaPR+NSCBQsAEWH16tWuF198sQsA6vx+f73f7792+fLlm3v27LmjcTgcTQaDYUFmZqZxjLANzoYRoBuECwBIJBKhhJDY0qVLNweDwWJKaSYi0qkccGlHgXg8rtFqtQYRMFXLs3XrVlpaWpr7wgsvnNLr9ZmCIIx6bSkmjgwoLAhCKBwOR6LRKGi1WiIaiGHnrMgEJ403IkpAotjnvE6ny9PpdHkA8Mf5+flAKYXHHnvMtXnz5lZNTk5OYXp6uty0Tgi2YSwKAADo9fp0vV6/fsZrRgPuXnWuZGdnZxgMho1arRZmu/R6/T1jONb+FSe5/DECEPcVkVtKotVq8+bNm/egJhKJWNLT0x8WLcaEYRvNEiIilfY9mQGNmmTEYjEUBMEHAFni7J3NtyoRSNCuGTIoB79T3GwJPR6PTSMIggMAviPSSabK8hBC7gefxouv2Q7g1Pr7AUPEUUqdGr/ff8doNFJI4fPIxjqbxZiUMgCnXFSsUnRqAMCuyGxmpdLS0kgkEsnOyspi4E2TQbDb7f0aq9X6ptvtPg4AKAhCKnU+AQC02WzZTz/99Mnc3Fw9pRTVMuGSkhLOZrO5W1tbi3Q6HS8IAkNkKuMcnkcAIHa7vXlWXK/D4XBN50oI09ilKSkp4d58881UdDsEAHDjxo1GMsZagslk4ouLi6e7nShrr/LzVA8HUrfwP5NrwROIh8hEE6dZkR0yJV4S9P39/U+GQqHWcDjcHA6HW8LhcFM0Gm3x+XxlsyE8YNs1zJAkV5+Tk5MBAMtUsnKb/OcYgExTGQPKa48CAPCU0sisSELY+CdNKCQBiDBwWxuZLRfOxMQAZGIAMjExAJkYgExMDEAmBiATEwOQiQHIxMQAZGIAMjExAJlSS7PiZgTxueTBh9JHeEB9RtsntUt8jJUBmDIXqdEAIQR4nh/yWbJIDtxsAW/WAJiWlkb7+/spx3EgCMLgYIfDYaSUzvjjby6XC3ieB0rpoAXkOA4GNg9Iff0fy9QZaQ3NcGAAAAAASUVORK5CYII=";
+const NB_LOGO_SM = "data:image/png;base64,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";
+
+function App() {
+  const [launched, setLaunched] = useState(false);
+  const [clientName, setClientName] = useState("");
+  const [tab, setTab] = useState("calc");
+
+  // ── Property Details ──
+  const [address, setAddress] = useState("123 Main St, Anytown USA");
+  const [price, setPrice] = useState(300000);
+  const [arv, setArv] = useState(320000);
+  const [rehab, setRehab] = useState(15000);
+  const [closing, setClosing] = useState(8000);
+  const [sqft, setSqft] = useState(1190);
+  const [beds, setBeds] = useState(3);
+  const [baths, setBaths] = useState(2);
+  const [yearBuilt, setYearBuilt] = useState(1975);
+  const [parking, setParking] = useState("1 Car Garage");
+  const [lotSqft, setLotSqft] = useState(1670);
+
+  // ── Financing ──
+  const [dpPct, setDpPct] = useState(20);
+  const [rate, setRate] = useState(7);
+  const [term, setTerm] = useState(30);
+
+  // ── Income ──
+  const [rent, setRent] = useState(2400);
+  const [otherIncome, setOtherIncome] = useState(100);
+  const [vacancy, setVacancy] = useState(5);
+
+  // ── Expenses ──
+  const [propTax, setPropTax] = useState(4200);
+  const [insurance, setInsurance] = useState(1800);
+  const [hoa, setHoa] = useState(0);
+  const [repairPct, setRepairPct] = useState(10);
+  const [mgmtPct, setMgmtPct] = useState(8);
+  const [capexPct, setCapexPct] = useState(5);
+  const [utilities, setUtilities] = useState(0);
+  const [lawnPest, setLawnPest] = useState(600);
+  const [legalAcct, setLegalAcct] = useState(500);
+
+  // ── Tax ──
+  const [landValue, setLandValue] = useState(60000);
+  const [usefulLife, setUsefulLife] = useState(27.5);
+  const [fedRate, setFedRate] = useState(24);
+  const [stateRate, setStateRate] = useState(3.07);
+  const [activeParticipation, setActiveParticipation] = useState(true);
+  const [reps, setReps] = useState(false);
+  const [reHours, setReHours] = useState(0);
+  const [otherHours, setOtherHours] = useState(2080);
+  const [w2Income, setW2Income] = useState(150000);
+  const [spouseIncome, setSpouseIncome] = useState(75000);
+  const [otherInc, setOtherInc] = useState(0);
+  const [taxYear, setTaxYear] = useState(2024);
+  const [filingStatus, setFilingStatus] = useState("mfj");
+  const [standardDed, setStandardDed] = useState(29200);
+  const [seAdvertising, setSeAdvertising] = useState(200);
+  const [seAutoTravel, setSeAutoTravel] = useState(300);
+  const [seCommissions, setSeCommissions] = useState(0);
+  const [seOtherInterest, setSeOtherInterest] = useState(0);
+  const [seSupplies, setSeSupplies] = useState(200);
+  const [seOtherExp, setSeOtherExp] = useState(0);
+
+  // ── Sale ──
+  const [salePrice, setSalePrice] = useState(380000);
+  const [sellCostPct, setSellCostPct] = useState(6);
+  const [yearsHeld, setYearsHeld] = useState(7);
+  const [ltcgRate, setLtcgRate] = useState(15);
+  const [recaptureRate, setRecaptureRate] = useState(25);
+  // ── Flip Analysis ──
+  const [flipLinked, setFlipLinked] = useState(true);
+  const [flipPrice, setFlipPrice] = useState(250000);
+  const [flipClosingBuy, setFlipClosingBuy] = useState(8000);
+  const [flipARV, setFlipARV] = useState(370000);
+  const [flipRehabBudget, setFlipRehabBudget] = useState(45000);
+  const [showRehabBreakdown, setShowRehabBreakdown] = useState(false);
+  const [rehabItems, setRehabItems] = useState([
+    { name: "Kitchen Remodel", cost: 12000 },
+    { name: "Bathroom(s)", cost: 8000 },
+    { name: "Flooring", cost: 5000 },
+    { name: "Paint (Interior & Exterior)", cost: 4000 },
+    { name: "Landscaping / Curb Appeal", cost: 3000 },
+    { name: "HVAC / Plumbing / Electrical", cost: 5000 },
+    { name: "Roof / Structural", cost: 3000 },
+    { name: "Windows / Doors", cost: 2500 },
+    { name: "Dumpster / Cleanup", cost: 1500 },
+    { name: "Other", cost: 1000 },
+  ]);
+  const updateRehabItem = (idx, field, val) => setRehabItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: val } : item));
+  const addRehabItem = () => setRehabItems(prev => [...prev, { name: "New Item", cost: 0 }]);
+  const removeRehabItem = (idx) => setRehabItems(prev => prev.filter((_, i) => i !== idx));
+  const rehabTotal = rehabItems.reduce((s, item) => s + (Number(item.cost) || 0), 0);
+  const applyRehabTotal = () => { setFlipRehabBudget(rehabTotal); setShowRehabBreakdown(false); };
+  const [flipTimeline, setFlipTimeline] = useState(4);
+  const [flipFinancing, setFlipFinancing] = useState("hard_money");
+  const [flipLoanPct, setFlipLoanPct] = useState(90);
+  const [flipLoanRate, setFlipLoanRate] = useState(12);
+  const [flipLoanPoints, setFlipLoanPoints] = useState(2);
+  const [flipInspection, setFlipInspection] = useState(500);
+  const [flipPermits, setFlipPermits] = useState(2000);
+  const [flipUtilities, setFlipUtilities] = useState(250);
+  const [flipInsHolding, setFlipInsHolding] = useState(150);
+  const [flipTaxHolding, setFlipTaxHolding] = useState(350);
+  const [flipStaging, setFlipStaging] = useState(2500);
+  const [flipAgentPct, setFlipAgentPct] = useState(5);
+  const [flipTransferTax, setFlipTransferTax] = useState(1);
+  const [flipSellerClosing, setFlipSellerClosing] = useState(3000);
+  const [flipContingency, setFlipContingency] = useState(10);
+
+
+  // ── Metric Benchmarks (Philadelphia area defaults, all adjustable) ──
+  const [benchmarks, setBenchmarks] = useState({
+    capRateGood: 5, capRateStrong: 8,
+    cocGood: 8, cocStrong: 12,
+    grmGood: 7, grmStrong: 5,
+    dscrGood: 1.25, dscrStrong: 1.5,
+    onePctPass: 1.0, onePctStrong: 1.5,
+    fiftyRuleMax: 50,
+    cfGood: 100, cfStrong: 200,
+    beGood: 85, beStrong: 75,
+  });
+  const updateBench = (k, v) => setBenchmarks(prev => ({ ...prev, [k]: v }));
+
+  // ── Scenarios ──
+  const emptyScenario = { name: "Property", url: "", price: 0, rent: 0, dpPct: 20, rate: 7, term: 30, vacancy: 5, tax: 0, ins: 0, hoa: 0, mgmt: 8, repair: 10, capex: 5, rehab: 0, closing: 8000, sqft: 0, beds: 0, baths: 0, yearBuilt: 0, parking: "", lotSqft: 0 };
+  const [scenarios, setScenarios] = useState([
+    { ...emptyScenario, name: "Property A", price: 300000, rent: 2400, tax: 4200, ins: 1800, sqft: 1190, beds: 3, baths: 2, yearBuilt: 1975, parking: "1 Car Garage", lotSqft: 1670, rehab: 15000 },
+    { ...emptyScenario, name: "Property B", price: 275000, rent: 2200, rate: 6.5, tax: 3800, ins: 1600, hoa: 200, sqft: 1400, beds: 3, baths: 2, yearBuilt: 1985, parking: "Driveway", lotSqft: 2200, rehab: 5000, closing: 7000 },
+    { ...emptyScenario, name: "Property C", price: 350000, rent: 2800, dpPct: 25, vacancy: 8, tax: 5100, ins: 2100, mgmt: 10, sqft: 1800, beds: 4, baths: 2.5, yearBuilt: 2001, parking: "2 Car Garage", lotSqft: 4000, rehab: 25000, closing: 9000 },
+  ]);
+  const [pasteMode, setPasteMode] = useState([false, false, false]);
+  const [pasteText, setPasteText] = useState(["", "", ""]);
+  const [fetchStatus, setFetchStatus] = useState([null, null, null]);
+
+  const updateScenario = useCallback((idx, field, val) => {
+    setScenarios(prev => prev.map((s, i) => i === idx ? { ...s, [field]: val } : s));
+  }, []);
+
+  // ── Paste & Parse for Scenarios ──
+  const parseListingText = useCallback((text, idx) => {
+    if (!text.trim()) return;
+
+    // Detect if user pasted a URL instead of page text
+    const trimmed = text.trim();
+    if (/^https?:\/\//i.test(trimmed) && trimmed.split("\n").length <= 2 && !trimmed.includes("$")) {
+      setFetchStatus(p => p.map((s,i) => i === idx ? "That's a URL, not listing text. Go to that page in your browser, select the property details (price, beds, sqft, etc.), copy them (Ctrl+C), then paste here." : s));
+      setTimeout(() => setFetchStatus(p => p.map((s,i) => i === idx ? null : s)), 8000);
+      return;
+    }
+
+    // Normalize: collapse whitespace, fix common copy-paste quirks
+    const t = text.replace(/\u00a0/g, " "); // non-breaking spaces
+    const updates = {};
+
+    // Helper: find first match as number
+    const n = (p) => { const m = t.match(p); return m ? parseFloat(m[1].replace(/,/g, "")) : null; };
+    // Helper: find ALL matches
+    const nAll = (p) => { const matches = []; let m; const re = new RegExp(p.source, p.flags.includes("g") ? p.flags : p.flags + "g"); while ((m = re.exec(t)) !== null) matches.push(parseFloat(m[1].replace(/,/g, ""))); return matches; };
+
+    // ── ADDRESS ──
+    // Match "123 Main St, City, ST 12345" patterns
+    const addr = t.match(/(\d+\s+[\w\s.]+(?:St|Street|Ave|Avenue|Rd|Road|Dr|Drive|Ln|Lane|Ct|Court|Blvd|Boulevard|Way|Pl|Place|Circle|Cir|Terr|Terrace|Pike|Trail|Run)[\w\s.]*,\s*[\w\s]+,\s*[A-Z]{2}\s*\d{5})/i);
+    if (addr) updates.name = addr[1].replace(/\s+/g, " ").trim();
+
+    // ── PRICE ── (largest dollar amount >= $50K, or explicitly labeled)
+    const labeled = n(/(?:price|asking|list(?:ed|ing)?|sale|for\s*sale)[:\s]*\$\s?([\d,]+)/i);
+    const dollarAmounts = nAll(/\$([\d,]{3,})/ig).filter(v => v >= 50000);
+    const zestimate = n(/(?:zestimate|estimated?\s*value)[:\s®]*\$\s?([\d,]+)/i);
+    if (labeled && labeled >= 50000) updates.price = labeled;
+    else if (dollarAmounts.length > 0) updates.price = Math.max(...dollarAmounts); // largest dollar amount is usually the price
+
+    // ── BEDS / BATHS / SQFT ── (handle Zillow's "3beds 2baths 1,190sqft" format)
+    // Zillow often jams these together: "3beds" "2baths" "1,190sqft"
+    const bedsMatch = n(/(\d+)\s*(?:beds?|br|bed\s*rooms?|bedrooms?)/i);
+    if (bedsMatch && bedsMatch >= 1 && bedsMatch <= 20) updates.beds = bedsMatch;
+    const bathsMatch = n(/([\d.]+)\s*(?:baths?|ba|bath\s*rooms?|bathrooms?|full\s*bath)/i);
+    if (bathsMatch && bathsMatch >= 1 && bathsMatch <= 20) updates.baths = bathsMatch;
+    const sqftMatch = n(/([\d,]+)\s*(?:sq\.?\s*ft\.?|sqft|square\s*feet)/i);
+    if (sqftMatch && sqftMatch >= 100 && sqftMatch < 100000) updates.sqft = sqftMatch;
+
+    // ── PRICE PER SQFT ── (can reverse-engineer price or sqft if we have one)
+    const ppsfMatch = n(/\$([\d,]+)\s*(?:\/\s*sq\s*ft|per\s*sq)/i);
+
+    // ── HOA ── ($100/mo or "HOA $100" or "HOA fee: $100/month")
+    const hoaMatch = n(/\$([\d,]+)\s*\/\s*mo(?:nth)?\s*(?:hoa|association)/i) || n(/(?:hoa|association)\s*(?:fee|dues)?[:\s]*\$([\d,]+)/i) || n(/\$([\d,]+)\s*\/\s*mo(?:nth)?\s*hoa/i);
+    // Also match "$100/mo HOA" pattern from Zillow
+    const hoaAlt = n(/\$\s?([\d,]+)\s*\/\s*mo\s+hoa/i);
+    const hoaVal = hoaMatch || hoaAlt;
+    if (hoaVal !== null && hoaVal > 0) {
+      updates.hoa = hoaVal <= 2000 ? Math.round(hoaVal * 12) : hoaVal; // assume monthly if <= $2000, annual if larger
+    }
+
+    // ── TAXES ──
+    const taxMatch = n(/(?:property\s*)?(?:tax|taxes)\s*(?:per\s*year|annual|yearly)?[:\s]*\$\s?([\d,]+)/i) || n(/\$\s?([\d,]+)\s*(?:\/?\s*(?:yr|year)|annual(?:ly)?|property\s*tax)/i);
+    if (taxMatch && taxMatch > 100) updates.tax = taxMatch;
+
+    // ── INSURANCE ──
+    const insMatch = n(/(?:home\s*(?:owners?)?|property)\s*insurance[:\s]*\$\s?([\d,]+)/i);
+    if (insMatch && insMatch > 100) updates.ins = insMatch;
+
+    // ── YEAR BUILT ──
+    const yrMatch = n(/(?:built|year\s*built|built\s*in|constructed)[:\s]*(\d{4})/i);
+    if (yrMatch && yrMatch > 1800 && yrMatch < 2030) updates.yearBuilt = yrMatch;
+
+    // ── PARKING ──
+    const parkMatch = t.match(/(\d+\s*[- ]?\s*car\s*(?:garage|attached|detached)|(?:attached|detached)\s*garage|driveway|carport|no\s*(?:garage|parking)|street\s*parking|off[- ]?street)/i);
+    if (parkMatch) updates.parking = parkMatch[1].replace(/\s+/g, " ").trim();
+
+    // ── LOT SIZE ──
+    const lotMatch = n(/([\d,]+)\s*(?:sq\.?\s*(?:ft|feet)\.?|sqft)\s*(?:lot)/i) || n(/(?:lot\s*(?:size|area)?)[:\s]*([\d,]+)\s*(?:sq|sf)/i);
+    if (lotMatch && lotMatch > 100) updates.lotSqft = lotMatch;
+    // Also try acres
+    const acreMatch = n(/([\d.]+)\s*(?:acres?|ac)\s*(?:lot)?/i) || n(/(?:lot)[:\s]*([\d.]+)\s*(?:acres?|ac)/i);
+    if (acreMatch && acreMatch > 0 && acreMatch < 100) updates.lotSqft = Math.round(acreMatch * 43560);
+
+    // ── RENT ESTIMATE (if present) ──
+    const rentMatch = n(/(?:rent\s*(?:estimate|zestimate)?|estimated?\s*rent)[:\s®]*\$\s?([\d,]+)/i) || n(/\$\s?([\d,]+)\s*\/\s*mo(?:nth)?(?!\s*hoa)/i);
+    if (rentMatch && rentMatch > 200 && rentMatch < 50000) updates.rent = rentMatch;
+
+    // ── PROPERTY TYPE ──
+    const typeMatch = t.match(/(?:single\s*family|townhouse|condo|duplex|multi[- ]?family|twin|semi[- ]?detached|ranch|colonial|cape\s*cod|split[- ]?level|bi[- ]?level)/i);
+
+    // Apply updates
+    const count = Object.keys(updates).length;
+    if (count > 0) {
+      setScenarios(prev => prev.map((s, i) => i === idx ? { ...s, ...updates } : s));
+      const fields = Object.keys(updates).join(", ");
+      setFetchStatus(p => p.map((s,i) => i === idx ? "success" : s));
+    } else {
+      setFetchStatus(p => p.map((s,i) => i === idx ? "No property data found. Try selecting more text from the listing page \u2014 include the price, beds/baths, sqft, and address." : s));
+    }
+    setTimeout(() => setFetchStatus(p => p.map((s,i) => i === idx ? null : s)), count > 0 ? 4000 : 8000);
+    setPasteMode(p => p.map((s,i) => i === idx ? false : s));
+    setPasteText(p => p.map((s,i) => i === idx ? "" : s));
+  }, []);
+
+  // ── Server Lookup (for hosted version) ──
+  const lookupProperty = useCallback(async (idx) => {
+    const query = scenarios[idx].url;
+    if (!query || query.trim().length < 5) {
+      setFetchStatus(p => p.map((s,i) => i === idx ? "Enter an address or listing URL above" : s));
+      setTimeout(() => setFetchStatus(p => p.map((s,i) => i === idx ? null : s)), 4000);
+      return;
+    }
+    setFetchStatus(p => p.map((s,i) => i === idx ? "loading" : s));
+    try {
+      const response = await fetch("/api/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: query.trim() }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Server error");
+      }
+      const p = await response.json();
+      if (p.error) throw new Error(p.error);
+      setScenarios(prev => prev.map((s, i) => {
+        if (i !== idx) return s;
+        return { ...s,
+          name: p.address || s.name,
+          price: p.price || s.price,
+          rent: p.rent || s.rent,
+          tax: p.tax || s.tax,
+          ins: p.ins || s.ins,
+          hoa: p.hoa || 0,
+          beds: p.beds || s.beds,
+          baths: p.baths || s.baths,
+          sqft: p.sqft || s.sqft,
+          yearBuilt: p.yearBuilt || s.yearBuilt,
+          lotSqft: p.lotSqft || s.lotSqft,
+          parking: p.parking || s.parking,
+        };
+      }));
+      setFetchStatus(pr => pr.map((s,i) => i === idx ? "success" : s));
+      setTimeout(() => setFetchStatus(pr => pr.map((s,i) => i === idx ? null : s)), 5000);
+    } catch (err) {
+      // Server not available — show paste fallback
+      const isNetworkError = err.message.includes("Failed to fetch") || err.message.includes("NetworkError") || err.message.includes("Server error");
+      if (isNetworkError) {
+        setPasteMode(p => p.map((v,j) => j === idx ? true : v));
+        setFetchStatus(p => p.map((s,i) => i === idx ? "Server not available. Use Paste below, or deploy the server for auto-lookup." : s));
+      } else {
+        setFetchStatus(p => p.map((s,i) => i === idx ? err.message : s));
+      }
+      setTimeout(() => setFetchStatus(p => p.map((s,i) => i === idx ? null : s)), 6000);
+    }
+  }, [scenarios]);
+
+  // ── Rent Estimator ──
+  // Philadelphia metro area rent-per-sqft averages by bed count
+  const estimateRent = useCallback((s) => {
+    // Philly metro averages (2024-2025): ~$1.50-1.80/sqft for SFH depending on area
+    // Adjust by beds: 1br=$1.80, 2br=$1.60, 3br=$1.50, 4br+=$1.40
+    const ratePerSqft = s.beds <= 1 ? 1.80 : s.beds === 2 ? 1.65 : s.beds === 3 ? 1.50 : 1.40;
+    const baseSqft = s.sqft || (s.beds <= 1 ? 700 : s.beds === 2 ? 1000 : s.beds === 3 ? 1300 : 1600);
+    let est = baseSqft * ratePerSqft;
+    // Age adjustment: newer = slight premium
+    if (s.yearBuilt > 2010) est *= 1.08;
+    else if (s.yearBuilt > 2000) est *= 1.04;
+    else if (s.yearBuilt < 1970) est *= 0.93;
+    // Garage premium
+    if (s.parking && /garage/i.test(s.parking)) est *= 1.04;
+    return Math.round(est / 25) * 25; // round to nearest $25
+  }, []);
+
+  // ══════════ CORE CALCULATIONS ══════════
+  const calc = useMemo(() => {
+    const dp = price * dpPct / 100;
+    const loan = price - dp;
+    const monthlyRate = rate / 100 / 12;
+    const nPayments = term * 12;
+    const monthlyPmt = loan > 0 ? PMT(monthlyRate, nPayments, loan) : 0;
+    const annualDebt = monthlyPmt * 12;
+    const grossAnnual = (rent + otherIncome) * 12;
+    const effGross = grossAnnual * (1 - vacancy / 100);
+    const repairAmt = grossAnnual * repairPct / 100;
+    const mgmtAmt = effGross * mgmtPct / 100;
+    const capexAmt = grossAnnual * capexPct / 100;
+    const totalOpEx = propTax + insurance + hoa + repairAmt + mgmtAmt + capexAmt + utilities + lawnPest + legalAcct;
+    const noi = effGross - totalOpEx;
+    const annualCF = noi - annualDebt;
+    const monthlyCF = annualCF / 12;
+    const totalInvested = dp + rehab + closing;
+    const pricePerSqft = sqft > 0 ? price / sqft : 0;
+    const capRate = price > 0 ? noi / price : 0;
+    const cocReturn = totalInvested > 0 ? annualCF / totalInvested : 0;
+    const grm = grossAnnual > 0 ? price / grossAnnual : 0;
+    const dscr = annualDebt > 0 ? noi / annualDebt : 0;
+    const onePercent = price > 0 ? rent / price : 0;
+    const fiftyRule = grossAnnual > 0 ? totalOpEx / grossAnnual : 0;
+    const breakEven = grossAnnual > 0 ? (totalOpEx + annualDebt) / grossAnnual : 0;
+    const depBasis = (price - landValue) + rehab;
+    const annualDeprec = usefulLife > 0 ? depBasis / usefulLife : 0;
+    const combinedRate = (fedRate + stateRate) / 100;
+
+    // Amortization
+    const amort = []; let bal = loan;
+    for (let m = 1; m <= nPayments && bal > 0.01; m++) {
+      const intP = bal * monthlyRate, prinP = monthlyPmt - intP;
+      bal = Math.max(bal - prinP, 0);
+      amort.push({ month: m, year: Math.ceil(m / 12), payment: monthlyPmt, principal: prinP, interest: intP, balance: bal, equity: loan - bal });
+    }
+    const annualAmort = [];
+    for (let y = 1; y <= term; y++) {
+      const ym = amort.filter(a => a.year === y); if (!ym.length) break;
+      annualAmort.push({ year: y, totalPaid: ym.reduce((s,m)=>s+m.payment,0), totalPrincipal: ym.reduce((s,m)=>s+m.principal,0), totalInterest: ym.reduce((s,m)=>s+m.interest,0), endBalance: ym[ym.length-1]?.balance||0, equity: ym[ym.length-1]?.equity||0 });
+    }
+    const yr1Interest = annualAmort[0]?.totalInterest || 0;
+
+    // Schedule E
+    const seRents = effGross;
+    const seTotalExp = seAdvertising + seAutoTravel + lawnPest + seCommissions + insurance + legalAcct + mgmtAmt + yr1Interest + seOtherInterest + repairAmt + seSupplies + propTax + utilities + annualDeprec + seOtherExp;
+    const seNet = seRents - seTotalExp;
+    const totalNonRental = w2Income + spouseIncome + otherInc;
+    const magi = totalNonRental;
+    const effectiveStdDed = standardDed || getStdDed(taxYear, filingStatus);
+    const taxableNoRental = Math.max(totalNonRental - effectiveStdDed, 0);
+
+    let lossPathway, allowance25k, maxDeductible, deductibleLoss, suspendedLoss;
+    if (reps) { lossPathway = "REPS \u2014 Unlimited"; allowance25k = 0; maxDeductible = seNet < 0 ? -seNet : 0; }
+    else if (activeParticipation) { lossPathway = "Active \u2014 $25K Allowance"; allowance25k = Math.max(Math.min(25000, 25000 - Math.max(magi - 100000, 0) / 2), 0); maxDeductible = seNet < 0 ? Math.min(-seNet, allowance25k) : 0; }
+    else { lossPathway = "Passive \u2014 No Deduction"; allowance25k = 0; maxDeductible = 0; }
+    deductibleLoss = seNet < 0 ? -Math.min(-seNet, maxDeductible) : 0;
+    suspendedLoss = seNet < 0 ? Math.min(seNet - deductibleLoss, 0) : 0;
+    const taxableWithRental = Math.max(taxableNoRental + (seNet > 0 ? seNet : 0) + deductibleLoss, 0);
+    const fedSavings = calcFedTax(taxableNoRental, taxYear, filingStatus) - calcFedTax(taxableWithRental, taxYear, filingStatus);
+    const stateSavings = deductibleLoss < 0 ? -deductibleLoss * stateRate / 100 : 0;
+    const totalTaxSavings = fedSavings + stateSavings;
+
+    // Sale
+    const sellCosts = salePrice * sellCostPct / 100;
+    const netProceeds = salePrice - sellCosts;
+    const accumDeprec = annualDeprec * yearsHeld;
+    const adjBasis = price + rehab - accumDeprec;
+    const totalGain = netProceeds - adjBasis;
+    const deprecRecapture = Math.min(accumDeprec, Math.max(totalGain, 0));
+    const capGain = Math.max(totalGain - deprecRecapture, 0);
+    const totalTaxOnSale = deprecRecapture * recaptureRate / 100 + capGain * ltcgRate / 100 + (magi > 250000 ? (deprecRecapture + capGain) * 0.038 : 0) + Math.max(totalGain, 0) * stateRate / 100;
+    const mortgagePayoff = annualAmort[yearsHeld - 1]?.endBalance ?? loan;
+    const cumSuspended = suspendedLoss * yearsHeld;
+    const releasedTaxSavings = Math.abs(cumSuspended) * combinedRate;
+    const cumCF = annualCF * yearsHeld;
+    const cumTaxSav = totalTaxSavings * yearsHeld;
+    const holdBenefit = cumCF + cumTaxSav;
+    const netEquityAtSale = netProceeds - mortgagePayoff - totalTaxOnSale + releasedTaxSavings;
+    const grandTotal = holdBenefit + netEquityAtSale;
+    const totalROI = totalInvested > 0 ? (grandTotal - totalInvested) / totalInvested : 0;
+    const annualizedROI = totalInvested > 0 && yearsHeld > 0 ? Math.pow(Math.max(grandTotal / totalInvested, 0), 1 / yearsHeld) - 1 : 0;
+
+    const B = benchmarks;
+    const scorecard = [
+      { name: "Cap Rate", value: fmt(capRate, "%"), bench: `> ${B.capRateGood}%`, pass: capRate >= B.capRateGood/100, strong: capRate >= B.capRateStrong/100 },
+      { name: "Cash-on-Cash Return", value: fmt(cocReturn, "%"), bench: `> ${B.cocGood}%`, pass: cocReturn >= B.cocGood/100, strong: cocReturn >= B.cocStrong/100 },
+      { name: "Gross Rent Multiplier", value: fmt(grm, "n"), bench: `< ${B.grmGood}`, pass: grm > 0 && grm <= B.grmGood, strong: grm > 0 && grm <= B.grmStrong },
+      { name: "Debt Service Coverage", value: fmt(dscr, "x"), bench: `> ${B.dscrGood}x`, pass: dscr >= B.dscrGood, strong: dscr >= B.dscrStrong },
+      { name: "1% Rule", value: fmt(onePercent, "%2"), bench: `> ${B.onePctPass}%`, pass: onePercent >= B.onePctPass/100, strong: onePercent >= B.onePctStrong/100 },
+      { name: "50% Rule", value: fmt(fiftyRule, "%"), bench: `< ${B.fiftyRuleMax}%`, pass: fiftyRule <= B.fiftyRuleMax/100 },
+      { name: "Monthly Cash Flow", value: fmt(monthlyCF, "$"), bench: `> $${B.cfGood}`, pass: monthlyCF >= B.cfGood, strong: monthlyCF >= B.cfStrong },
+      { name: "Break-Even Ratio", value: fmt(breakEven, "%"), bench: `< ${B.beGood}%`, pass: breakEven <= B.beGood/100, strong: breakEven <= B.beStrong/100 },
+    ];
+    const passing = scorecard.filter(s => s.pass).length;
+    const verdict = passing >= 6 ? `STRONG BUY \u2014 ${passing}/8 pass` : passing >= 4 ? `CONSIDER \u2014 ${passing}/8 pass` : `CAUTION \u2014 ${passing}/8 pass`;
+
+    return { dp, loan, monthlyPmt, annualDebt, grossAnnual, effGross, repairAmt, mgmtAmt, capexAmt, totalOpEx, opExRatio: grossAnnual > 0 ? totalOpEx / grossAnnual : 0, noi, annualCF, monthlyCF, totalInvested, pricePerSqft, capRate, cocReturn, grm, dscr, onePercent, fiftyRule, breakEven, depBasis, annualDeprec, combinedRate, yr1Interest, seRents, seTotalExp, seNet, totalNonRental, magi, taxableNoRental, lossPathway, allowance25k, deductibleLoss, suspendedLoss, taxableWithRental, fedTaxWithout: calcFedTax(taxableNoRental, taxYear, filingStatus), fedTaxWith: calcFedTax(taxableWithRental, taxYear, filingStatus), fedSavings, stateSavings, totalTaxSavings, sellCosts, netProceeds, accumDeprec, adjBasis, totalGain, deprecRecapture, capGain, totalTaxOnSale, mortgagePayoff, cumSuspended, releasedTaxSavings, cumCF, cumTaxSav, holdBenefit, netEquityAtSale, grandTotal, totalROI, annualizedROI, scorecard, passing, verdict, amort, annualAmort };
+  }, [price, arv, rehab, closing, dpPct, rate, term, rent, otherIncome, vacancy, propTax, insurance, hoa, repairPct, mgmtPct, capexPct, utilities, lawnPest, legalAcct, landValue, usefulLife, fedRate, stateRate, activeParticipation, reps, w2Income, spouseIncome, otherInc, standardDed, seAdvertising, seAutoTravel, seCommissions, seOtherInterest, seSupplies, seOtherExp, salePrice, sellCostPct, yearsHeld, ltcgRate, recaptureRate, sqft, benchmarks, taxYear, filingStatus]);
+
+  // ── Scenario calculations ──
+  const scenarioCalcs = useMemo(() => {
+    return scenarios.map(s => {
+      const B = benchmarks;
+      const dp = s.price * s.dpPct / 100, loan = s.price - dp, mo = loan > 0 ? PMT(s.rate / 100 / 12, s.term * 12, loan) : 0, annual = mo * 12;
+      const gross = s.rent * 12, eff = gross * (1 - s.vacancy / 100);
+      const opex = s.tax + s.ins + s.hoa + (gross * s.repair / 100) + (eff * s.mgmt / 100) + (gross * s.capex / 100);
+      const noi = eff - opex, cf = noi - annual, invested = dp + s.rehab + s.closing;
+      const capRate = s.price > 0 ? noi / s.price : 0, coc = invested > 0 ? cf / invested : 0;
+      const grm = gross > 0 ? s.price / gross : 0, dscr = annual > 0 ? noi / annual : 0;
+      const onePct = s.price > 0 ? s.rent / s.price : 0, be = gross > 0 ? (opex + annual) / gross : 0;
+      const ppsf = s.sqft > 0 ? s.price / s.sqft : 0;
+      const pass = (capRate >= B.capRateGood/100?1:0) + (coc >= B.cocGood/100?1:0) + (grm > 0 && grm <= B.grmGood?1:0) + (dscr >= B.dscrGood?1:0) + (onePct >= B.onePctPass/100?1:0) + (be <= B.beGood/100?1:0);
+      return { dp, loan, mo, noi, cf, invested, capRate, coc, grm, dscr, onePct, be, ppsf, pass, verdict: pass >= 5 ? "STRONG BUY" : pass >= 3 ? "CONSIDER" : "CAUTION" };
+    });
+  }, [scenarios, benchmarks]);
+
+
+  // ── Flip Calculations ──
+  const flipCalc = useMemo(() => {
+    // Acquisition — linked mode pulls from Calculator tab
+    const purchasePrice = flipLinked ? price : flipPrice;
+    const buyClosing = flipLinked ? closing : flipClosingBuy;
+    const saleARVValue = flipLinked ? arv : flipARV;
+    const totalAcquisition = purchasePrice + buyClosing + flipInspection;
+
+    // Financing
+    const flipLoanAmt = purchasePrice * flipLoanPct / 100;
+    const flipDownPmt = purchasePrice - flipLoanAmt;
+    const pointsCost = flipLoanAmt * flipLoanPoints / 100;
+    const monthlyLoanPmt = flipLoanAmt > 0 ? flipLoanAmt * (flipLoanRate / 100 / 12) : 0; // interest-only for hard money
+    const totalLoanPayments = monthlyLoanPmt * flipTimeline;
+
+    // Rehab
+    const contingencyAmt = flipRehabBudget * flipContingency / 100;
+    const totalRehab = flipRehabBudget + contingencyAmt + flipPermits;
+
+    // Holding costs (per month × months)
+    const monthlyHolding = monthlyLoanPmt + flipInsHolding + flipTaxHolding + flipUtilities;
+    const totalHolding = monthlyHolding * flipTimeline;
+
+    // Total cost to complete the flip
+    const totalProjectCost = totalAcquisition + totalRehab + totalHolding + pointsCost;
+
+    // Sale
+    const saleARV = saleARVValue;
+    const agentCommission = saleARV * flipAgentPct / 100;
+    const transferTaxAmt = saleARV * flipTransferTax / 100;
+    const totalSellingCosts = agentCommission + transferTaxAmt + flipSellerClosing + flipStaging;
+    const netSaleProceeds = saleARV - totalSellingCosts;
+
+    // Profit
+    const netProfit = netSaleProceeds - totalProjectCost;
+    const totalCashInvested = flipDownPmt + flipClosingBuy + flipInspection + totalRehab + (totalHolding - totalLoanPayments) + pointsCost + flipStaging;
+    // Actually, total cash out of pocket:
+    const cashOutOfPocket = flipDownPmt + buyClosing + flipInspection + pointsCost + totalRehab + (flipInsHolding + flipTaxHolding + flipUtilities) * flipTimeline + flipStaging;
+
+    // Metrics
+    const roi = cashOutOfPocket > 0 ? netProfit / cashOutOfPocket : 0;
+    const annualizedROI = flipTimeline > 0 ? Math.pow(Math.max(1 + roi, 0), 12 / flipTimeline) - 1 : 0;
+    const profitMargin = saleARV > 0 ? netProfit / saleARV : 0;
+
+    // 70% Rule: Max offer = 70% of ARV - rehab
+    const maxOffer70 = saleARV * 0.70 - flipRehabBudget;
+    const passes70 = purchasePrice <= maxOffer70;
+
+    // Tax on flip profit (short-term capital gains = ordinary income)
+    const flipTaxRate = (fedRate + stateRate) / 100;
+    const flipTaxEstimate = Math.max(netProfit, 0) * flipTaxRate;
+    const afterTaxProfit = netProfit - flipTaxEstimate;
+
+    // Flip vs Rent comparison
+    const rentalAnnualCF = calc.annualCF;
+    const rentalAnnualTaxSav = calc.totalTaxSavings;
+    const rentalTotalAnnual = rentalAnnualCF + rentalAnnualTaxSav;
+    const yearsToMatchFlip = rentalTotalAnnual > 0 ? afterTaxProfit / rentalTotalAnnual : Infinity;
+
+    return {
+      purchasePrice, buyClosing, totalAcquisition, flipLoanAmt, flipDownPmt, pointsCost,
+      monthlyLoanPmt, totalLoanPayments, contingencyAmt, totalRehab, monthlyHolding, totalHolding,
+      totalProjectCost, saleARV, agentCommission, transferTaxAmt, totalSellingCosts, netSaleProceeds,
+      netProfit, cashOutOfPocket, roi, annualizedROI, profitMargin, maxOffer70, passes70,
+      flipTaxEstimate, afterTaxProfit, rentalAnnualCF, rentalAnnualTaxSav, rentalTotalAnnual, yearsToMatchFlip
+    };
+  }, [flipLinked, flipPrice, flipClosingBuy, flipARV, price, closing, arv, flipRehabBudget, flipTimeline, flipLoanPct, flipLoanRate, flipLoanPoints,
+      flipInspection, flipPermits, flipUtilities, flipInsHolding, flipTaxHolding, flipStaging,
+      flipAgentPct, flipTransferTax, flipSellerClosing, flipContingency, fedRate, stateRate, calc]);
+
+  const [amortPage, setAmortPage] = useState(0);
+
+  // ── Calculator Lookup ──
+  const [calcQuery, setCalcQuery] = useState("");
+  const [calcFetchStatus, setCalcFetchStatus] = useState(null);
+
+  const lookupForCalc = useCallback(async () => {
+    if (!calcQuery || calcQuery.trim().length < 5) {
+      setCalcFetchStatus("Enter an address or paste a listing URL");
+      setTimeout(() => setCalcFetchStatus(null), 4000);
+      return;
+    }
+    setCalcFetchStatus("loading");
+    try {
+      const response = await fetch("/api/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: calcQuery.trim() }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Server error");
+      }
+      const p = await response.json();
+      if (p.error) throw new Error(p.error);
+      if (p.address) setAddress(p.address);
+      if (p.price) setPrice(p.price);
+      if (p.tax) setPropTax(p.tax);
+      if (p.ins) setInsurance(p.ins);
+      if (p.hoa) setHoa(p.hoa);
+      if (p.beds) setBeds(p.beds);
+      if (p.baths) setBaths(p.baths);
+      if (p.sqft) setSqft(p.sqft);
+      if (p.yearBuilt) setYearBuilt(p.yearBuilt);
+      if (p.lotSqft) setLotSqft(p.lotSqft);
+      if (p.parking) setParking(p.parking);
+      if (p.rent) setRent(p.rent);
+      setCalcFetchStatus("success");
+      setTimeout(() => setCalcFetchStatus(null), 5000);
+    } catch (err) {
+      setCalcFetchStatus("Lookup unavailable \u2014 enter values manually or use the hosted version for auto-lookup");
+      setTimeout(() => setCalcFetchStatus(null), 6000);
+    }
+  }, [calcQuery]);
+
+  // ══════════ RENDER ══════════
+
+  // ── Landing Page ──
+  if (!launched) {
+    return (
+      <div style={{ minHeight: "100vh", background: `linear-gradient(160deg, ${C.navy} 0%, #0F1A2E 40%, ${C.dkBlue} 100%)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Montserrat',sans-serif", padding: 24 }}>
+        <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&family=Playfair+Display:wght@700;800&display=swap" rel="stylesheet" />
+        {/* Decorative top bar */}
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, height: 4, background: `linear-gradient(90deg, ${C.mdBlue}, ${C.gold}, ${C.mdBlue})` }} />
+        {/* Bridge icon + text */}
+        <img src={NB_LOGO} alt="Newbridge" style={{ width: 120, marginBottom: 24, filter: "drop-shadow(0 4px 16px rgba(0,0,0,0.3))" }} />
+        <div style={{ fontSize: 14, fontWeight: 600, color: "#F8E08E", textTransform: "uppercase", letterSpacing: 4, marginBottom: 8 }}>Newbridge</div>
+        <div style={{ fontSize: 12, fontWeight: 500, color: "#B0C4DEcc", textTransform: "uppercase", letterSpacing: 6, marginBottom: 36 }}>Wealth Management</div>
+        {/* Title */}
+        <div style={{ fontSize: 38, fontWeight: 800, color: C.white, textAlign: "center", lineHeight: 1.2, marginBottom: 12, fontFamily: "'Playfair Display',serif", maxWidth: 600 }}>Rental Property Investment Calculator</div>
+        <div style={{ fontSize: 15, color: `${C.muted}dd`, textAlign: "center", maxWidth: 520, lineHeight: 1.6, marginBottom: 40 }}>Analyze any rental property with institutional-grade metrics, tax modeling, depreciation analysis, and side-by-side scenario comparison.</div>
+        {/* Features */}
+        <div style={{ display: "flex", gap: 24, marginBottom: 40, flexWrap: "wrap", justifyContent: "center" }}>
+          {[["📊","8-Metric Scorecard"],["📋","Schedule E & Tax"],["📅","Amortization Tables"],["⚖️","3-Property Compare"]].map(([icon, text]) => (
+            <div key={text} style={{ display: "flex", alignItems: "center", gap: 8, background: `${C.white}08`, borderRadius: 10, padding: "10px 18px", border: `1px solid ${C.white}12` }}>
+              <span style={{ fontSize: 18 }}>{icon}</span>
+              <span style={{ fontSize: 13, color: C.white, fontWeight: 500 }}>{text}</span>
+            </div>
+          ))}
+        </div>
+        {/* Client name input */}
+        <div style={{ background: `${C.white}0A`, borderRadius: 16, padding: "28px 36px", border: `1px solid ${C.white}15`, maxWidth: 420, width: "100%", marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 12 }}>Prepared for</div>
+          <input type="text" value={clientName} onChange={e => setClientName(e.target.value)} placeholder="Enter client name (optional)"
+            style={{ width: "100%", padding: "12px 16px", borderRadius: 10, border: `1px solid ${C.white}22`, background: `${C.white}08`, color: "#222222", fontSize: 16, fontWeight: 600, fontFamily: "'Montserrat',sans-serif", outline: "none", textAlign: "center", letterSpacing: 0.5 }}
+            onKeyDown={e => { if (e.key === "Enter") setLaunched(true); }}
+          />
+        </div>
+        {/* Launch button */}
+        <button onClick={() => setLaunched(true)}
+          style={{ padding: "14px 48px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${C.mdBlue}, ${C.gold})`, color: C.white, fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "'Montserrat',sans-serif", letterSpacing: 1, boxShadow: "0 4px 20px rgba(58,91,160,0.4)", transition: "transform 0.2s, box-shadow 0.2s" }}
+          onMouseOver={e => { e.target.style.transform = "translateY(-2px)"; e.target.style.boxShadow = "0 6px 28px rgba(58,91,160,0.5)"; }}
+          onMouseOut={e => { e.target.style.transform = "translateY(0)"; e.target.style.boxShadow = "0 4px 20px rgba(58,91,160,0.4)"; }}
+        >Launch Calculator</button>
+        {/* Footer */}
+        <div style={{ marginTop: 48, textAlign: "center" }}>
+          <div style={{ fontSize: 11, color: `${C.muted}88`, lineHeight: 1.6 }}>This tool is for informational purposes only and does not constitute investment advice.</div>
+          <div style={{ fontSize: 11, color: `${C.muted}66`, marginTop: 4 }}>Consult your tax professional for individual tax implications.</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "'Montserrat',sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+
+      {/* Header */}
+      <div style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.dkBlue})`, padding: "18px 24px 0" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <img src={NB_LOGO_SM} alt="" style={{ height: 24, opacity: 0.9 }} />
+                <span style={{ fontSize: 21, fontWeight: 800, color: C.white, letterSpacing: -0.5 }}>Rental Property Calculator</span>
+              </div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>Newbridge Wealth Management{clientName ? ` \u2022 ${clientName}` : ""}</div>
+            </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              {(() => { const c = calc.passing >= 6 ? C.green : calc.passing >= 4 ? C.gold : C.red; return <div style={{ background: `${c}22`, border: `1px solid ${c}`, borderRadius: 8, padding: "5px 14px", color: c, fontSize: 12, fontWeight: 700 }}>{"\u25CF"} {calc.verdict}</div>; })()}
+              <button className="no-print" onClick={() => window.print()} style={{ padding: "5px 14px", borderRadius: 8, border: `1px solid ${C.muted}44`, background: "transparent", color: C.muted, fontSize: 11, cursor: "pointer", fontWeight: 600 }}>Print / PDF</button>
+            </div>
+          </div>
+          <div className="no-print" style={{ display: "flex", gap: 0, overflowX: "auto" }}>
+            <Tab active={tab==="calc"} label="Calculator" icon="🔢" onClick={()=>setTab("calc")} />
+            <Tab active={tab==="summary"} label="Summary" icon="📊" onClick={()=>setTab("summary")} />
+            <Tab active={tab==="tax"} label="Tax Analysis" icon="📋" onClick={()=>setTab("tax")} />
+            <Tab active={tab==="sale"} label="Sale Analysis" icon="🏷️" onClick={()=>setTab("sale")} />
+            <Tab active={tab==="amort"} label="Amortization" icon="📅" onClick={()=>setTab("amort")} />
+            <Tab active={tab==="scenario"} label="Scenarios" icon="⚖️" onClick={()=>setTab("scenario")} />
+            <Tab active={tab==="flip"} label="Flip Analysis" icon="🔨" onClick={()=>setTab("flip")} />
+            <Tab active={tab==="guide"} label="Metric Guide" icon="📖" onClick={()=>setTab("guide")} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "18px 24px 40px" }}>
+
+        {/* ═══ CALCULATOR TAB ═══ */}
+        {tab === "calc" && (<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={grid2}>
+            <Card title="Property Details">
+              <div style={{ background: C.softBlue, borderRadius: 8, padding: 10, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.navy, marginBottom: 4 }}>Property Lookup</div>
+                <div style={{ fontSize: 10, color: C.muted, marginBottom: 5 }}>Type an address or paste a Zillow/Redfin URL</div>
+                <input type="text" value={calcQuery} placeholder="e.g. 361 Bridge St, Collegeville PA 19426"
+                  onChange={e => setCalcQuery(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") lookupForCalc(); }}
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${C.mdBlue}44`, fontSize: 12, outline: "none", fontFamily: "'Montserrat',sans-serif", marginBottom: 6 }} />
+                <button onClick={lookupForCalc} disabled={calcFetchStatus === "loading"}
+                  style={{ width: "100%", padding: "7px 0", borderRadius: 6, border: "none", background: calcFetchStatus === "loading" ? C.muted : `linear-gradient(135deg, ${C.mdBlue}, ${C.navy})`, color: C.white, fontWeight: 700, fontSize: 12, cursor: calcFetchStatus === "loading" ? "wait" : "pointer" }}>
+                  {calcFetchStatus === "loading" ? "⏳ Looking up..." : "🔍 Look Up Property"}
+                </button>
+                {calcFetchStatus === "success" && <div style={{ fontSize: 10, color: C.green, padding: "4px 0", fontWeight: 600 }}>{"\u2713"} Data populated — verify and adjust below</div>}
+                {calcFetchStatus && calcFetchStatus !== "success" && calcFetchStatus !== "loading" && <div style={{ fontSize: 10, color: C.red, padding: "4px 0", lineHeight: 1.4 }}>{calcFetchStatus}</div>}
+              </div>
+              <Inp label="Address" value={address} onChange={setAddress} type="text" wide />
+              <Inp label="Purchase Price" value={price} onChange={setPrice} prefix="$" />
+              <Inp label="After Repair Value" value={arv} onChange={setArv} prefix="$" />
+              <Inp label="Rehab / Renovation" value={rehab} onChange={setRehab} prefix="$" />
+              <Inp label="Closing Costs" value={closing} onChange={setClosing} prefix="$" />
+              <div style={{ borderTop: `1px solid ${C.ltBlue}`, marginTop: 6, paddingTop: 6 }}>
+                <Inp label="Square Footage" value={sqft} onChange={setSqft} suffix="sqft" />
+                <Inp label="Bedrooms" value={beds} onChange={setBeds} />
+                <Inp label="Bathrooms" value={baths} onChange={setBaths} step="0.5" />
+                <Inp label="Year Built" value={yearBuilt} onChange={setYearBuilt} />
+                <Inp label="Lot Size" value={lotSqft} onChange={setLotSqft} suffix="sqft" />
+                <Inp label="Parking" value={parking} onChange={setParking} type="text" />
+                <Row label="Price / Sq Ft" value={fmt(calc.pricePerSqft)} bold />
+              </div>
+            </Card>
+            <Card title="Financing">
+              <Inp label="Down Payment" value={dpPct} onChange={setDpPct} suffix="%" />
+              <Row label="Down Payment $" value={fmt(calc.dp)} />
+              <Row label="Loan Amount" value={fmt(calc.loan)} />
+              <Inp label="Interest Rate" value={rate} onChange={setRate} suffix="%" step="0.125" />
+              <Inp label="Loan Term" value={term} onChange={setTerm} suffix="yrs" />
+              <Row label="Monthly Payment" value={fmt(calc.monthlyPmt, "$d")} bold />
+              <Row label="Annual Debt Service" value={fmt(calc.annualDebt)} />
+            </Card>
+          </div>
+          <div style={grid2}>
+            <Card title="Rental Income">
+              <Inp label="Monthly Gross Rent" value={rent} onChange={setRent} prefix="$" />
+              <div style={{ fontSize: 10, color: C.muted, fontStyle: "italic", padding: "2px 0" }}>Estimated market rent for {beds}BR/{sqft}sqft in this area: ~{fmt(estimateRent({ beds, sqft, yearBuilt, parking }))}/mo</div>
+              <Inp label="Other Monthly Income" value={otherIncome} onChange={setOtherIncome} prefix="$" note="parking, laundry, storage, pet fees" />
+              <Inp label="Vacancy Rate" value={vacancy} onChange={setVacancy} suffix="%" />
+              <Row label="Gross Annual Income" value={fmt(calc.grossAnnual)} />
+              <Row label="Effective Gross Income" value={fmt(calc.effGross)} bold />
+            </Card>
+            <Card title="Operating Expenses (Annual)">
+              <Inp label="Property Taxes" value={propTax} onChange={setPropTax} prefix="$" />
+              <Inp label="Insurance" value={insurance} onChange={setInsurance} prefix="$" />
+              <Inp label="HOA / Condo Fees" value={hoa} onChange={setHoa} prefix="$" />
+              <Inp label="Repairs & Maintenance" value={repairPct} onChange={setRepairPct} suffix="% of rent" />
+              <Inp label="Property Management" value={mgmtPct} onChange={setMgmtPct} suffix="% of rent" />
+              <Inp label="CapEx Reserve" value={capexPct} onChange={setCapexPct} suffix="% of rent" />
+              <Inp label="Utilities (landlord)" value={utilities} onChange={setUtilities} prefix="$" />
+              <Inp label="Lawn / Snow / Pest" value={lawnPest} onChange={setLawnPest} prefix="$" />
+              <Inp label="Legal & Accounting" value={legalAcct} onChange={setLegalAcct} prefix="$" />
+              <Row label="Total Operating Expenses" value={fmt(calc.totalOpEx)} bold />
+              <Row label="Expense Ratio" value={fmt(calc.opExRatio, "%")} />
+            </Card>
+          </div>
+          <Card title="Investment Scorecard" accent={C.dkBlue}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.8fr 1.2fr 0.8fr", padding: "7px 12px", borderBottom: `2px solid ${C.navy}` }}>
+              {["Metric","Value","Benchmark","Result"].map(h=><span key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", textAlign: h==="Metric"?"left":"center" }}>{h}</span>)}
+            </div>
+            {calc.scorecard.map(s=><ScorecardRow key={s.name} name={s.name} value={s.value} benchmark={s.bench} verdict={s.strong?"✓ STRONG":s.pass?"✓ GOOD":"✗ FAIL"} pass={s.pass} />)}
+            <div style={{ textAlign: "center", padding: 12, background: calc.passing >= 6 ? C.greenBg : calc.passing >= 4 ? C.goldBg : C.redBg, borderRadius: 8, marginTop: 10, fontSize: 15, fontWeight: 800, color: calc.passing >= 6 ? C.green : calc.passing >= 4 ? C.gold : C.red }}>{calc.verdict}</div>
+            <div style={{ fontSize: 10, color: C.muted, textAlign: "center", marginTop: 6 }}>Benchmarks are adjustable on the Metric Guide tab. Currently set for the Philadelphia metro area.</div>
+          </Card>
+        </div>)}
+
+        {/* ═══ SUMMARY TAB ═══ */}
+        {tab === "summary" && (<div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <div style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.mdBlue})`, borderRadius: 16, padding: "22px 26px", color: C.white }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: 2 }}>Investment Property Analysis{clientName ? ` \u2014 Prepared for ${clientName}` : ""}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4 }}>{address}</div>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{beds} bed / {baths} bath / {sqft.toLocaleString()} sqft / Built {yearBuilt} / {parking} / Lot {lotSqft.toLocaleString()} sqft</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>Prepared by Newbridge Wealth Management{clientName ? ` for ${clientName}` : ""}</div>
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Stat label="Purchase Price" value={fmt(price)} />
+            <Stat label="Price/SqFt" value={fmt(calc.pricePerSqft)} />
+            <Stat label="Cash Invested" value={fmt(calc.totalInvested)} />
+            <Stat label="Monthly Cash Flow" value={fmt(calc.monthlyCF)} color={calc.monthlyCF >= 0 ? C.green : C.red} bg={calc.monthlyCF >= 0 ? C.greenBg : C.redBg} />
+            <Stat label="Cap Rate" value={fmt(calc.capRate, "%")} />
+            <Stat label="NOI" value={fmt(calc.noi)} />
+          </div>
+          <div style={grid2}>
+            <Card title="Investment Scorecard" accent={C.dkBlue}>
+              <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.8fr 1.2fr 0.8fr", padding: "7px 12px", borderBottom: `2px solid ${C.navy}` }}>
+                {["Metric","Value","Benchmark","Result"].map(h=><span key={h} style={{ fontSize: 10, fontWeight: 700, color: C.muted, textTransform: "uppercase", textAlign: h==="Metric"?"left":"center" }}>{h}</span>)}
+              </div>
+              {calc.scorecard.map(s=><ScorecardRow key={s.name} name={s.name} value={s.value} benchmark={s.bench} verdict={s.strong?"✓ STRONG":s.pass?"✓ GOOD":"✗ FAIL"} pass={s.pass} />)}
+              <div style={{ textAlign: "center", padding: 12, background: C.ltBlue, borderRadius: 8, marginTop: 10, fontSize: 14, fontWeight: 800, color: C.navy }}>{calc.verdict}</div>
+            </Card>
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <Card title="Cash Flow Summary">
+                <Row label="Monthly Gross Rent" value={fmt(rent)} />
+                <Row label="Effective Gross Income" value={fmt(calc.effGross)} bold />
+                <Row label="Total Operating Expenses" value={fmt(-calc.totalOpEx)} neg />
+                <Row label="Net Operating Income" value={fmt(calc.noi)} bold hi={calc.noi>0} />
+                <Row label="Annual Debt Service" value={fmt(-calc.annualDebt)} neg />
+                <Row label="Annual Cash Flow" value={fmt(calc.annualCF)} bold hi={calc.annualCF>0} neg={calc.annualCF<0} />
+              </Card>
+              <Card title="Tax Benefits">
+                <Row label="Annual Depreciation" value={fmt(calc.annualDeprec)} />
+                <Row label="Loss Pathway" value={calc.lossPathway} />
+                <Row label="Annual Tax Savings" value={fmt(calc.totalTaxSavings)} bold hi />
+                <Row label="Suspended Loss / Year" value={fmt(calc.suspendedLoss)} />
+              </Card>
+            </div>
+          </div>
+          <Card title={`Projected ${yearsHeld}-Year Total Return`} accent={C.navy}>
+            <div style={grid2}>
+              <div><div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>During Holding Period</div><Row label="Cumulative Cash Flow" value={fmt(calc.cumCF)} /><Row label="Cumulative Tax Savings" value={fmt(calc.cumTaxSav)} /><Row label="Total Holding Benefit" value={fmt(calc.holdBenefit)} bold /></div>
+              <div><div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>At Disposition</div><Row label="Net Sale Proceeds" value={fmt(calc.netProceeds)} /><Row label="Mortgage Payoff" value={fmt(-calc.mortgagePayoff)} neg /><Row label="Tax on Sale" value={fmt(-calc.totalTaxOnSale)} neg /><Row label="Released Suspended Losses" value={fmt(calc.releasedTaxSavings)} hi /><Row label="Net Equity at Sale" value={fmt(calc.netEquityAtSale)} bold /></div>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+              <Stat label="Total Return" value={fmt(calc.grandTotal)} color={C.green} bg={C.greenBg} />
+              <Stat label="Total ROI" value={fmt(calc.totalROI, "%")} color={C.navy} bg={C.ltBlue} />
+              <Stat label="Annualized ROI" value={fmt(calc.annualizedROI, "%")} color={C.navy} bg={C.softBlue} />
+              <Stat label="Cash Invested" value={fmt(calc.totalInvested)} color={C.text} bg={C.bg} />
+            </div>
+          </Card>
+          <div style={{ textAlign: "center", fontSize: 10, color: C.muted }}>Newbridge Wealth Management — For informational purposes only. Consult your tax professional for individual implications.</div>
+        </div>)}
+
+        {/* ═══ TAX TAB ═══ */}
+        {tab === "tax" && (<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={grid2}>
+            <Card title="Depreciation"><Inp label="Purchase Price" value={price} onChange={setPrice} prefix="$" /><Inp label="Land Value" value={landValue} onChange={setLandValue} prefix="$" note="from county tax assessment" /><Row label="Land %" value={fmt(price > 0 ? landValue / price : 0, "%")} /><Row label="Building Value" value={fmt(price - landValue)} /><Row label="+ Rehab" value={fmt(rehab)} /><Row label="Depreciable Basis" value={fmt(calc.depBasis)} bold /><div style={{ borderTop: `1px solid ${C.ltBlue}`, marginTop: 6, paddingTop: 6 }}><Inp label="Useful Life" value={usefulLife} onChange={setUsefulLife} suffix="yrs" /><Row label="Annual Depreciation" value={fmt(calc.annualDeprec)} bold hi /></div></Card>
+            <Card title="Schedule E"><div style={{ fontSize: 11, fontWeight: 700, color: C.mdBlue, padding: "3px 0", borderBottom: `1px solid ${C.ltBlue}` }}>INCOME</div><Row label="3a. Rents Received" value={fmt(calc.seRents)} /><div style={{ fontSize: 11, fontWeight: 700, color: C.mdBlue, padding: "6px 0 3px", borderBottom: `1px solid ${C.ltBlue}` }}>EXPENSES</div><Inp label="5. Advertising" value={seAdvertising} onChange={setSeAdvertising} prefix="$" /><Inp label="6. Auto & Travel" value={seAutoTravel} onChange={setSeAutoTravel} prefix="$" /><Row label="7. Cleaning & Maint" value={fmt(lawnPest)} /><Inp label="8. Commissions" value={seCommissions} onChange={setSeCommissions} prefix="$" /><Row label="9. Insurance" value={fmt(insurance)} /><Row label="10. Legal Fees" value={fmt(legalAcct)} /><Row label="11. Management" value={fmt(calc.mgmtAmt)} /><Row label="12. Mortgage Interest" value={fmt(calc.yr1Interest)} /><Inp label="13. Other Interest" value={seOtherInterest} onChange={setSeOtherInterest} prefix="$" /><Row label="14. Repairs" value={fmt(calc.repairAmt)} /><Inp label="15. Supplies" value={seSupplies} onChange={setSeSupplies} prefix="$" /><Row label="16. Taxes" value={fmt(propTax)} /><Row label="17. Utilities" value={fmt(utilities)} /><Row label="18. Depreciation" value={fmt(calc.annualDeprec)} hi /><Inp label="19. Other" value={seOtherExp} onChange={setSeOtherExp} prefix="$" /><div style={{ borderTop: `2px solid ${C.navy}`, paddingTop: 6, marginTop: 6 }}><Row label="20. Total Expenses" value={fmt(calc.seTotalExp)} bold /><Row label="21. Net Income (Loss)" value={fmt(calc.seNet)} bold hi={calc.seNet>0} neg={calc.seNet<0} /></div></Card>
+          </div>
+          <div style={grid2}>
+            <Card title="Tax Rates & REPS"><Inp label="Federal Rate" value={fedRate} onChange={setFedRate} suffix="%" /><Inp label="State Rate" value={stateRate} onChange={setStateRate} suffix="%" step="0.01" /><Row label="Combined" value={fmt(calc.combinedRate, "%")} /><Toggle label="Active Participation?" value={activeParticipation} onChange={setActiveParticipation} /><Toggle label="RE Professional (REPS)?" value={reps} onChange={setReps} />{reps && (<div style={{ background: C.softBlue, borderRadius: 8, padding: 10, marginTop: 6 }}><div style={{ fontSize: 11, fontWeight: 700, color: C.mdBlue, marginBottom: 6 }}>REPS TRACKER</div><Inp label="RE Hours" value={reHours} onChange={setReHours} suffix="hrs" /><Inp label="Other Hours" value={otherHours} onChange={setOtherHours} suffix="hrs" /><Row label="750-Hour Test" value={reHours >= 750 ? "✓ PASS" : `✗ Need ${750-reHours} more`} bold hi={reHours>=750} /><Row label=">50% Test" value={reHours > otherHours ? "✓ PASS" : "✗ FAIL"} bold hi={reHours>otherHours} /></div>)}</Card>
+            <Card title="Client Tax Impact"><Inp label="W-2 Income" value={w2Income} onChange={setW2Income} prefix="$" /><Inp label="Spouse Income" value={spouseIncome} onChange={setSpouseIncome} prefix="$" /><Inp label="Other Income" value={otherInc} onChange={setOtherInc} prefix="$" /><Row label="Total Non-Rental" value={fmt(calc.totalNonRental)} bold /><div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"5px 0", borderBottom:`1px solid ${C.ltBlue}22` }}>
+                <span style={{ fontSize:13, color:C.text }}>Tax Year</span>
+                <select value={taxYear} onChange={e=>{const yr=Number(e.target.value);setTaxYear(yr);setStandardDed(getStdDed(yr,filingStatus));}} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${C.gold}44`, background:C.inputBg, fontSize:14, fontWeight:700, color:C.mdBlue, cursor:"pointer" }}>
+                  {TAX_YEARS.map(y=><option key={y} value={y}>{y}{y>2025?" (proj)":""}</option>)}
+                </select>
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"5px 0", borderBottom:`1px solid ${C.ltBlue}22` }}>
+                <span style={{ fontSize:13, color:C.text }}>Filing Status</span>
+                <select value={filingStatus} onChange={e=>{setFilingStatus(e.target.value);setStandardDed(getStdDed(taxYear,e.target.value));}} style={{ padding:"4px 8px", borderRadius:6, border:`1px solid ${C.gold}44`, background:C.inputBg, fontSize:12, fontWeight:700, color:C.mdBlue, cursor:"pointer", maxWidth:170 }}>
+                  {FILING_OPTIONS.map(f=><option key={f} value={f}>{FILING_LABELS[f]}</option>)}
+                </select>
+              </div>
+              <Inp label="Standard Deduction" value={standardDed} onChange={setStandardDed} prefix="$" note={"Auto-set for "+taxYear+" "+FILING_LABELS[filingStatus]+". Override if itemizing."} /><Row label="Taxable (no rental)" value={fmt(calc.taxableNoRental)} /><div style={{ background: C.softBlue, borderRadius: 8, padding: 10, marginTop: 10 }}><Row label="Loss Pathway" value={calc.lossPathway} bold /><Row label="$25K Allowance" value={fmt(calc.allowance25k)} /><Row label="Deductible Loss" value={fmt(calc.deductibleLoss)} /><Row label="Suspended Loss" value={fmt(calc.suspendedLoss)} /></div><div style={{ background: C.greenBg, borderRadius: 8, padding: 10, marginTop: 10 }}><Row label="Fed Tax WITHOUT" value={fmt(calc.fedTaxWithout)} /><Row label="Fed Tax WITH" value={fmt(calc.fedTaxWith)} /><Row label="Federal Savings" value={fmt(calc.fedSavings)} bold hi /><Row label="State Savings" value={fmt(calc.stateSavings)} hi /><Row label="Total Tax Savings" value={fmt(calc.totalTaxSavings)} bold hi /></div></Card>
+          </div>
+        </div>)}
+
+        {/* ═══ SALE TAB ═══ */}
+        {tab === "sale" && (<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={grid2}>
+            <Card title="Sale Inputs"><Inp label="Sale Price" value={salePrice} onChange={setSalePrice} prefix="$" /><Inp label="Selling Costs" value={sellCostPct} onChange={setSellCostPct} suffix="%" /><Row label="Selling Costs $" value={fmt(calc.sellCosts)} /><Row label="Net Proceeds" value={fmt(calc.netProceeds)} bold /><Inp label="Years Held" value={yearsHeld} onChange={setYearsHeld} /></Card>
+            <Card title="Adjusted Basis"><Row label="Purchase Price" value={fmt(price)} /><Row label="+ Improvements" value={fmt(rehab)} /><Row label={"− Depreciation (" + yearsHeld + " yrs)"} value={fmt(-calc.accumDeprec)} neg /><Row label="Adjusted Basis" value={fmt(calc.adjBasis)} bold /></Card>
+          </div>
+          <div style={grid2}>
+            <Card title="Gain Breakdown"><Row label="Total Gain" value={fmt(calc.totalGain)} bold /><Row label="Depreciation Recapture" value={fmt(calc.deprecRecapture)} neg /><Row label="Capital Gain" value={fmt(calc.capGain)} /></Card>
+            <Card title="Tax on Sale"><Inp label="Recapture Rate" value={recaptureRate} onChange={setRecaptureRate} suffix="%" /><Inp label="LTCG Rate" value={ltcgRate} onChange={setLtcgRate} suffix="%" /><Row label="Total Tax on Sale" value={fmt(calc.totalTaxOnSale)} bold neg /></Card>
+          </div>
+          <Card title="Suspended Loss Release" accent={C.mdBlue}><Row label="Annual Suspended" value={fmt(calc.suspendedLoss)} /><Row label="Cumulative" value={fmt(calc.cumSuspended)} bold /><Row label="Tax Savings Released" value={fmt(calc.releasedTaxSavings)} bold hi /></Card>
+          <Card title="Total Return" accent={C.navy}>
+            <div style={grid2}>
+              <div><div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>Holding ({yearsHeld} yrs)</div><Row label="Cash Flow" value={fmt(calc.cumCF)} /><Row label="Tax Savings" value={fmt(calc.cumTaxSav)} /><Row label="Holding Benefit" value={fmt(calc.holdBenefit)} bold /></div>
+              <div><div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>At Disposition</div><Row label="Net Proceeds" value={fmt(calc.netProceeds)} /><Row label="Mortgage Payoff" value={fmt(-calc.mortgagePayoff)} neg /><Row label="Tax on Sale" value={fmt(-calc.totalTaxOnSale)} neg /><Row label="Released Losses" value={fmt(calc.releasedTaxSavings)} hi /><Row label="Net Equity" value={fmt(calc.netEquityAtSale)} bold /></div>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}><Stat label="Total Return" value={fmt(calc.grandTotal)} color={C.green} bg={C.greenBg} /><Stat label="Total ROI" value={fmt(calc.totalROI, "%")} color={C.navy} bg={C.ltBlue} /><Stat label="Annualized ROI" value={fmt(calc.annualizedROI, "%")} color={C.navy} bg={C.softBlue} /></div>
+          </Card>
+        </div>)}
+
+        {/* ═══ AMORTIZATION TAB ═══ */}
+        {tab === "amort" && (<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}><Stat label="Loan Amount" value={fmt(calc.loan)} /><Stat label="Monthly Payment" value={fmt(calc.monthlyPmt, "$d")} /><Stat label="Total Interest" value={fmt(calc.annualAmort.reduce((s,y)=>s+y.totalInterest,0))} color={C.red} bg={C.redBg} /><Stat label={`Bal @ Year ${yearsHeld}`} value={fmt(calc.mortgagePayoff)} color={C.navy} bg={C.softBlue} /></div>
+          <Card title="Annual Summary"><div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'Space Mono',monospace" }}><thead><tr style={{ background: C.navy }}>{["Yr","Paid","Principal","Interest","Balance","Equity"].map(h=><th key={h} style={{ padding: "7px 10px", color: C.white, textAlign: "right", fontSize: 10, fontFamily: "'Montserrat'" }}>{h}</th>)}</tr></thead><tbody>{calc.annualAmort.map(y=><tr key={y.year} style={{ background: y.year===yearsHeld ? C.goldBg : y.year%2===0 ? C.bg : C.white, borderBottom: `1px solid ${C.ltBlue}33` }}><td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 700, color: C.navy }}>{y.year}</td><td style={{ padding: "5px 10px", textAlign: "right" }}>{fmt(y.totalPaid)}</td><td style={{ padding: "5px 10px", textAlign: "right", color: C.green }}>{fmt(y.totalPrincipal)}</td><td style={{ padding: "5px 10px", textAlign: "right", color: C.red }}>{fmt(y.totalInterest)}</td><td style={{ padding: "5px 10px", textAlign: "right", fontWeight: 600 }}>{fmt(y.endBalance)}</td><td style={{ padding: "5px 10px", textAlign: "right", color: C.mdBlue }}>{fmt(y.equity)}</td></tr>)}</tbody></table></div></Card>
+          <Card title="Monthly Detail"><div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'Space Mono',monospace" }}><thead><tr style={{ background: C.navy }}>{["Mo","Yr","Payment","Principal","Interest","Balance","Equity"].map(h=><th key={h} style={{ padding: "5px 8px", color: C.white, textAlign: "right", fontSize: 10, fontFamily: "'Montserrat'" }}>{h}</th>)}</tr></thead><tbody>{calc.amort.slice(amortPage*60,(amortPage+1)*60).map(m=><tr key={m.month} style={{ background: m.month%12===0 ? C.softBlue : m.month%2===0 ? C.bg : C.white }}><td style={{ padding: "3px 8px", textAlign: "right", fontWeight: 600 }}>{m.month}</td><td style={{ padding: "3px 8px", textAlign: "right" }}>{m.year}</td><td style={{ padding: "3px 8px", textAlign: "right" }}>{fmt(m.payment,"$d")}</td><td style={{ padding: "3px 8px", textAlign: "right", color: C.green }}>{fmt(m.principal,"$d")}</td><td style={{ padding: "3px 8px", textAlign: "right", color: C.red }}>{fmt(m.interest,"$d")}</td><td style={{ padding: "3px 8px", textAlign: "right" }}>{fmt(m.balance,"$d")}</td><td style={{ padding: "3px 8px", textAlign: "right", color: C.mdBlue }}>{fmt(m.equity)}</td></tr>)}</tbody></table></div><div className="no-print" style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 10 }}>{Array.from({length: Math.ceil(calc.amort.length/60)},(_,i)=><button key={i} onClick={()=>setAmortPage(i)} style={{ padding: "3px 10px", borderRadius: 6, border: `1px solid ${C.ltBlue}`, background: amortPage===i ? C.navy : C.white, color: amortPage===i ? C.white : C.navy, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>{i*60+1}-{Math.min((i+1)*60,calc.amort.length)}</button>)}</div></Card>
+        </div>)}
+
+        {/* ═══ SCENARIOS TAB ═══ */}
+        {tab === "scenario" && (<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 13, color: C.muted }}>Compare up to 3 properties. Enter an address or Zillow/Redfin URL and click <strong style={{ color: C.navy }}>Look Up</strong> to auto-fill all property details.</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            {scenarios.map((s,i) => {
+              const sc = scenarioCalcs[i];
+              const rentEst = estimateRent(s);
+              return (
+                <Card key={i} title={s.name} accent={i===0?C.navy:i===1?C.dkBlue:C.mdBlue}>
+                  <div style={{ background: C.softBlue, borderRadius: 8, padding: 10, marginBottom: 6 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.navy, marginBottom: 4 }}>Property Lookup</div>
+                    <div style={{ fontSize: 10, color: C.muted, marginBottom: 5 }}>Enter address or paste listing URL</div>
+                    <input type="text" value={s.url} placeholder="e.g. 361 Bridge St, Collegeville PA"
+                      onChange={e => updateScenario(i, "url", e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter") lookupProperty(i); }}
+                      style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: `1px solid ${C.mdBlue}44`, fontSize: 12, outline: "none", fontFamily: "'Montserrat',sans-serif", marginBottom: 6 }} />
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button onClick={() => lookupProperty(i)} disabled={fetchStatus[i] === "loading"}
+                        style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: "none", background: fetchStatus[i] === "loading" ? C.muted : `linear-gradient(135deg, ${C.mdBlue}, ${C.navy})`, color: C.white, fontWeight: 700, fontSize: 12, cursor: fetchStatus[i] === "loading" ? "wait" : "pointer" }}>
+                        {fetchStatus[i] === "loading" ? "⏳ Looking up..." : "🔍 Look Up"}
+                      </button>
+                      <button onClick={() => setPasteMode(p => p.map((v,j) => j===i ? !v : v))}
+                        style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${C.mdBlue}33`, background: C.white, color: C.mdBlue, fontWeight: 600, fontSize: 10, cursor: "pointer" }}>
+                        {pasteMode[i] ? "✕" : "📋"}
+                      </button>
+                    </div>
+                  </div>
+                  {pasteMode[i] && (<div style={{ background: C.goldBg, borderRadius: 8, padding: 10, marginBottom: 4 }}>
+                    <div style={{ fontSize: 10, color: C.text, lineHeight: 1.5, marginBottom: 6 }}>Copy the property details from the listing page and paste below:</div>
+                    <textarea value={pasteText[i]} onChange={e => setPasteText(p => p.map((v,j) => j===i ? e.target.value : v))} placeholder={"$299,900\n361 Bridge St, Collegeville, PA 19426\n3beds 2baths 1,190sqft\nBuilt in 1975  $100/mo HOA"} style={{ width: "100%", height: 90, border: `1px solid ${C.mdBlue}44`, borderRadius: 6, padding: 8, fontSize: 11, resize: "vertical", outline: "none", fontFamily: "'Montserrat',sans-serif" }} />
+
+                    <button onClick={() => parseListingText(pasteText[i], i)} style={{ padding: "6px 0", borderRadius: 6, border: "none", background: `linear-gradient(135deg, ${C.green}, #219a52)`, color: C.white, fontWeight: 700, fontSize: 12, cursor: "pointer", width: "100%" }}>Extract & Fill</button>
+                  </div>)}
+                  {fetchStatus[i] === "success" && <div style={{ fontSize: 10, color: C.green, padding: "3px 0", fontWeight: 600 }}>✓ Data populated — verify and adjust</div>}
+                  {fetchStatus[i] && fetchStatus[i] !== "success" && fetchStatus[i] !== "loading" && <div style={{ fontSize: 10, color: C.red, padding: "3px 0" }}>{fetchStatus[i]}</div>}
+                  <div style={{ height: 1, background: C.ltBlue, margin: "4px 0" }} />
+                  {/* Property Details */}
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.mdBlue, padding: "3px 0" }}>PROPERTY</div>
+                  <Inp label="Price" value={s.price} onChange={v=>updateScenario(i,"price",v)} prefix="$" />
+                  <Inp label="Sqft" value={s.sqft} onChange={v=>updateScenario(i,"sqft",v)} />
+                  <Inp label="Beds" value={s.beds} onChange={v=>updateScenario(i,"beds",v)} />
+                  <Inp label="Baths" value={s.baths} onChange={v=>updateScenario(i,"baths",v)} step="0.5" />
+                  <Inp label="Year Built" value={s.yearBuilt} onChange={v=>updateScenario(i,"yearBuilt",v)} />
+                  <Inp label="Parking" value={s.parking} onChange={v=>updateScenario(i,"parking",v)} type="text" />
+                  <Inp label="Lot SqFt" value={s.lotSqft} onChange={v=>updateScenario(i,"lotSqft",v)} />
+                  {sc.ppsf > 0 && <Row label="Price/SqFt" value={fmt(sc.ppsf)} bold />}
+                  <div style={{ height: 1, background: C.ltBlue, margin: "4px 0" }} />
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.mdBlue, padding: "3px 0" }}>INCOME & FINANCING</div>
+                  <Inp label="Rent/mo" value={s.rent} onChange={v=>updateScenario(i,"rent",v)} prefix="$" />
+                  <div style={{ fontSize: 9, color: C.muted, fontStyle: "italic", padding: "1px 0" }}>Market estimate: ~{fmt(rentEst)}/mo</div>
+                  <Inp label="Down %" value={s.dpPct} onChange={v=>updateScenario(i,"dpPct",v)} suffix="%" />
+                  <Inp label="Rate" value={s.rate} onChange={v=>updateScenario(i,"rate",v)} suffix="%" />
+                  <Inp label="Vacancy" value={s.vacancy} onChange={v=>updateScenario(i,"vacancy",v)} suffix="%" />
+                  <div style={{ height: 1, background: C.ltBlue, margin: "4px 0" }} />
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.mdBlue, padding: "3px 0" }}>EXPENSES</div>
+                  <Inp label="Tax" value={s.tax} onChange={v=>updateScenario(i,"tax",v)} prefix="$" />
+                  <Inp label="Insurance" value={s.ins} onChange={v=>updateScenario(i,"ins",v)} prefix="$" />
+                  <Inp label="HOA" value={s.hoa} onChange={v=>updateScenario(i,"hoa",v)} prefix="$" />
+                  <Inp label="Rehab" value={s.rehab} onChange={v=>updateScenario(i,"rehab",v)} prefix="$" />
+                  <Inp label="Closing" value={s.closing} onChange={v=>updateScenario(i,"closing",v)} prefix="$" />
+                  <div style={{ height: 1, background: C.navy, margin: "6px 0" }} />
+                  <Row label="NOI" value={fmt(sc.noi)} bold />
+                  <Row label="Monthly CF" value={fmt(sc.cf/12)} bold hi={sc.cf>0} neg={sc.cf<0} />
+                  <Row label="Cap Rate" value={fmt(sc.capRate,"%")} bold />
+                  <Row label="CoC Return" value={fmt(sc.coc,"%")} />
+                  <Row label="GRM" value={fmt(sc.grm,"n")} />
+                  <Row label="DSCR" value={fmt(sc.dscr,"x")} />
+                  <Row label="1% Rule" value={fmt(sc.onePct,"%2")} />
+                  <Row label="Break-Even" value={fmt(sc.be,"%")} />
+                  <div style={{ textAlign: "center", padding: 8, marginTop: 6, borderRadius: 8, background: sc.pass>=5?C.greenBg:sc.pass>=3?C.goldBg:C.redBg, fontWeight: 800, fontSize: 13, color: sc.pass>=5?C.green:sc.pass>=3?C.gold:C.red }}>{sc.verdict} ({sc.pass}/6)</div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>)}
+
+
+        {/* ═══ FLIP ANALYSIS TAB ═══ */}
+        {tab === "flip" && (<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ background: `linear-gradient(135deg, ${C.navy}, ${C.dkBlue})`, borderRadius: 12, padding: "16px 20px", color: C.white }}>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>House Flip Analysis</div>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>All fields are editable. Toggle "Linked to Calculator" to pull values from the Calculator tab automatically.</div>
+          </div>
+
+          {/* Key stats */}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Stat label="Purchase" value={fmt(flipLinked ? price : flipPrice)} />
+            <Stat label="Rehab" value={fmt(flipRehabBudget + flipCalc.contingencyAmt)} />
+            <Stat label="ARV (Sale)" value={fmt(flipLinked ? arv : flipARV)} />
+            <Stat label="Net Profit" value={fmt(flipCalc.netProfit)} color={flipCalc.netProfit >= 0 ? C.green : C.red} bg={flipCalc.netProfit >= 0 ? C.greenBg : C.redBg} />
+            <Stat label="ROI" value={fmt(flipCalc.roi, "%")} color={flipCalc.roi >= 0.15 ? C.green : flipCalc.roi >= 0 ? C.navy : C.red} bg={flipCalc.roi >= 0.15 ? C.greenBg : C.ltBlue} />
+          </div>
+
+          <div style={grid2}>
+            {/* LEFT: Costs */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <Card title="Acquisition Costs">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", marginBottom: 4, borderBottom: `1px solid ${C.ltBlue}33` }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Linked to Calculator</span>
+                  <button onClick={() => { if (!flipLinked) { setFlipPrice(price); setFlipClosingBuy(closing); setFlipARV(arv); } setFlipLinked(!flipLinked); }}
+                    style={{ padding: "4px 14px", borderRadius: 6, border: "none", background: flipLinked ? C.green : C.muted, color: C.white, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+                    {flipLinked ? "Linked" : "Standalone"}
+                  </button>
+                </div>
+                {flipLinked && <div style={{ fontSize: 10, color: C.green, fontStyle: "italic", marginBottom: 4 }}>Pulling price, closing costs, and ARV from Calculator tab. Switch to Standalone to edit independently.</div>}
+                {flipLinked ? (
+                  <><Row label="Purchase Price" value={fmt(price)} bold />
+                  <Row label="Buyer Closing Costs" value={fmt(closing)} /></>
+                ) : (
+                  <><Inp label="Purchase Price" value={flipPrice} onChange={setFlipPrice} prefix="$" />
+                  <Inp label="Buyer Closing Costs" value={flipClosingBuy} onChange={setFlipClosingBuy} prefix="$" /></>
+                )}
+                <Inp label="Inspection / Appraisal" value={flipInspection} onChange={setFlipInspection} prefix="$" />
+                <Row label="Total Acquisition" value={fmt(flipCalc.totalAcquisition)} bold />
+              </Card>
+
+              <Card title="Financing">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${C.ltBlue}22` }}>
+                  <span style={{ fontSize: 13 }}>Loan Type</span>
+                  <select value={flipFinancing} onChange={e => setFlipFinancing(e.target.value)}
+                    style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.gold}44`, background: C.inputBg, fontSize: 12, fontWeight: 700, color: C.mdBlue, cursor: "pointer" }}>
+                    <option value="hard_money">Hard Money Loan</option>
+                    <option value="conventional">Conventional</option>
+                    <option value="cash">All Cash</option>
+                    <option value="heloc">HELOC / Line of Credit</option>
+                  </select>
+                </div>
+                {flipFinancing !== "cash" && (<>
+                  <Inp label="Loan-to-Value" value={flipLoanPct} onChange={setFlipLoanPct} suffix="%" />
+                  <Inp label="Interest Rate" value={flipLoanRate} onChange={setFlipLoanRate} suffix="%" step="0.25" />
+                  {(flipFinancing === "hard_money") && <Inp label="Points (origination)" value={flipLoanPoints} onChange={setFlipLoanPoints} suffix="pts" />}
+                  <Row label="Loan Amount" value={fmt(flipCalc.flipLoanAmt)} />
+                  <Row label="Down Payment" value={fmt(flipCalc.flipDownPmt)} bold />
+                  {flipCalc.pointsCost > 0 && <Row label="Points Cost" value={fmt(flipCalc.pointsCost)} />}
+                  <Row label="Monthly Interest" value={fmt(flipCalc.monthlyLoanPmt)} />
+                </>)}
+                {flipFinancing === "cash" && <Row label="Cash Required" value={fmt(flipLinked ? price : flipPrice)} bold />}
+              </Card>
+
+              <Card title="Rehab Budget">
+                <Inp label="Renovation Costs" value={flipRehabBudget} onChange={setFlipRehabBudget} prefix="$" />
+                <button onClick={() => setShowRehabBreakdown(true)}
+                  style={{ width: "100%", padding: "6px 0", borderRadius: 6, border: `1px dashed ${C.mdBlue}44`, background: C.softBlue, color: C.mdBlue, fontWeight: 600, fontSize: 11, cursor: "pointer", marginTop: 4, marginBottom: 4 }}>
+                  + Itemize Renovation Costs
+                </button>
+                <Inp label="Contingency" value={flipContingency} onChange={setFlipContingency} suffix="%" note="unexpected costs buffer" />
+                <Row label="Contingency $" value={fmt(flipCalc.contingencyAmt)} />
+                <Inp label="Permits & Fees" value={flipPermits} onChange={setFlipPermits} prefix="$" />
+                <Row label="Total Rehab" value={fmt(flipCalc.totalRehab)} bold />
+                <div style={{ borderTop: `1px solid ${C.ltBlue}`, marginTop: 6, paddingTop: 6 }}>
+                  <Inp label="Project Timeline" value={flipTimeline} onChange={setFlipTimeline} suffix="months" />
+                </div>
+              </Card>
+            </div>
+
+            {/* RIGHT: Holding, Sale, Metrics */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <Card title="Monthly Holding Costs">
+                <div style={{ fontSize: 10, color: C.muted, fontStyle: "italic", marginBottom: 4 }}>Costs you pay each month while you own the property during renovation</div>
+                {flipFinancing !== "cash" && <Row label="Loan Payment" value={fmt(flipCalc.monthlyLoanPmt)} />}
+                <Inp label="Insurance" value={flipInsHolding} onChange={setFlipInsHolding} prefix="$" suffix="/mo" />
+                <Inp label="Property Tax" value={flipTaxHolding} onChange={setFlipTaxHolding} prefix="$" suffix="/mo" />
+                <Inp label="Utilities" value={flipUtilities} onChange={setFlipUtilities} prefix="$" suffix="/mo" />
+                <Row label="Total Monthly" value={fmt(flipCalc.monthlyHolding)} bold />
+                <Row label={"Total Holding (" + flipTimeline + " months)"} value={fmt(flipCalc.totalHolding)} bold />
+              </Card>
+
+              <Card title="Sale & Selling Costs">
+                {flipLinked ? <Row label="After Repair Value (ARV)" value={fmt(arv)} bold /> : <Inp label="After Repair Value (ARV)" value={flipARV} onChange={setFlipARV} prefix="$" />}
+                <Inp label="Agent Commission" value={flipAgentPct} onChange={setFlipAgentPct} suffix="%" />
+                <Row label="Commission $" value={fmt(flipCalc.agentCommission)} />
+                <Inp label="Transfer Tax" value={flipTransferTax} onChange={setFlipTransferTax} suffix="%" note="PA transfer tax (1% state + local)" />
+                <Row label="Transfer Tax $" value={fmt(flipCalc.transferTaxAmt)} />
+                <Inp label="Seller Closing Costs" value={flipSellerClosing} onChange={setFlipSellerClosing} prefix="$" />
+                <Inp label="Staging" value={flipStaging} onChange={setFlipStaging} prefix="$" />
+                <Row label="Total Selling Costs" value={fmt(flipCalc.totalSellingCosts)} bold />
+                <Row label="Net Sale Proceeds" value={fmt(flipCalc.netSaleProceeds)} bold />
+              </Card>
+
+              <Card title="Tax Impact" accent={C.dkBlue}>
+                <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Flips held less than 12 months are taxed as short-term capital gains (your ordinary income rate).</div>
+                <Row label="Combined Tax Rate" value={fmt((fedRate + stateRate) / 100, "%")} />
+                <Row label="Estimated Tax on Profit" value={fmt(flipCalc.flipTaxEstimate)} neg />
+                <Row label="After-Tax Profit" value={fmt(flipCalc.afterTaxProfit)} bold hi={flipCalc.afterTaxProfit > 0} neg={flipCalc.afterTaxProfit < 0} />
+              </Card>
+            </div>
+          </div>
+
+          {/* PROFIT & METRICS */}
+          <Card title="Flip Scorecard" accent={C.navy}>
+            <div style={grid2}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>Profit Breakdown</div>
+                <Row label="Total Project Cost" value={fmt(flipCalc.totalProjectCost)} bold />
+                <Row label="Net Sale Proceeds" value={fmt(flipCalc.netSaleProceeds)} />
+                <Row label="Net Profit (pre-tax)" value={fmt(flipCalc.netProfit)} bold hi={flipCalc.netProfit > 0} neg={flipCalc.netProfit < 0} />
+                <Row label="After-Tax Profit" value={fmt(flipCalc.afterTaxProfit)} bold hi={flipCalc.afterTaxProfit > 0} neg={flipCalc.afterTaxProfit < 0} />
+                <Row label="Cash Out of Pocket" value={fmt(flipCalc.cashOutOfPocket)} />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", marginBottom: 6 }}>Key Metrics</div>
+                <Row label="Return on Investment" value={fmt(flipCalc.roi, "%")} bold hi={flipCalc.roi >= 0.15} neg={flipCalc.roi < 0} />
+                <Row label={"Annualized ROI (" + flipTimeline + " mo)"} value={fmt(flipCalc.annualizedROI, "%")} bold />
+                <Row label="Profit Margin" value={fmt(flipCalc.profitMargin, "%")} />
+                <Row label={"Profit per Month (" + flipTimeline + " mo)"} value={fmt(flipCalc.netProfit / Math.max(flipTimeline, 1))} />
+                <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: flipCalc.passes70 ? C.greenBg : C.redBg }}>
+                  <Row label="70% Rule Max Offer" value={fmt(flipCalc.maxOffer70)} bold />
+                  <Row label="Your Purchase Price" value={fmt(flipLinked ? price : flipPrice)} />
+                  <Row label="70% Rule" value={flipCalc.passes70 ? "✓ PASS — below max" : "✗ FAIL — over max by " + fmt((flipLinked ? price : flipPrice) - flipCalc.maxOffer70)} bold hi={flipCalc.passes70} neg={!flipCalc.passes70} />
+                </div>
+              </div>
+            </div>
+
+            {/* Overall verdict */}
+            <div style={{ textAlign: "center", padding: 14, marginTop: 12, borderRadius: 8,
+              background: flipCalc.roi >= 0.20 && flipCalc.passes70 ? C.greenBg : flipCalc.roi >= 0.10 ? C.goldBg : C.redBg,
+              fontSize: 16, fontWeight: 800,
+              color: flipCalc.roi >= 0.20 && flipCalc.passes70 ? C.green : flipCalc.roi >= 0.10 ? C.gold : C.red }}>
+              {flipCalc.roi >= 0.20 && flipCalc.passes70 ? "STRONG FLIP \u2014 " + fmt(flipCalc.roi, "%") + " ROI" :
+               flipCalc.roi >= 0.10 ? "MARGINAL FLIP \u2014 " + fmt(flipCalc.roi, "%") + " ROI, review costs" :
+               flipCalc.roi >= 0 ? "WEAK FLIP \u2014 " + fmt(flipCalc.roi, "%") + " ROI, thin margin" :
+               "DO NOT FLIP \u2014 Projected loss of " + fmt(Math.abs(flipCalc.netProfit))}
+            </div>
+          </Card>
+
+          {/* FLIP vs RENT */}
+          <Card title="Flip vs. Hold as Rental" accent={C.dkBlue}>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>Should you flip this property for a quick profit or hold it as a long-term rental? This comparison uses the rental analysis from your Calculator tab.</div>
+            <div style={grid2}>
+              <div style={{ background: C.softBlue, borderRadius: 10, padding: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 8 }}>🔨 FLIP IT</div>
+                <Row label="Timeline" value={flipTimeline + " months"} />
+                <Row label="Cash Required" value={fmt(flipCalc.cashOutOfPocket)} />
+                <Row label="Pre-Tax Profit" value={fmt(flipCalc.netProfit)} bold hi={flipCalc.netProfit > 0} neg={flipCalc.netProfit < 0} />
+                <Row label="After-Tax Profit" value={fmt(flipCalc.afterTaxProfit)} bold hi={flipCalc.afterTaxProfit > 0} neg={flipCalc.afterTaxProfit < 0} />
+                <Row label="ROI" value={fmt(flipCalc.roi, "%")} bold />
+                <div style={{ fontSize: 10, color: C.muted, fontStyle: "italic", marginTop: 6 }}>One-time profit. Cash back in {flipTimeline} months. Taxed at ordinary income rate ({fmt((fedRate + stateRate) / 100, "%")}).</div>
+              </div>
+              <div style={{ background: C.greenBg, borderRadius: 10, padding: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.green, marginBottom: 8 }}>🏠 RENT IT</div>
+                <Row label="Timeline" value="Ongoing" />
+                <Row label="Cash Required" value={fmt(calc.totalInvested)} />
+                <Row label="Annual Cash Flow" value={fmt(flipCalc.rentalAnnualCF)} hi={flipCalc.rentalAnnualCF > 0} neg={flipCalc.rentalAnnualCF < 0} />
+                <Row label="Annual Tax Savings" value={fmt(flipCalc.rentalAnnualTaxSav)} hi />
+                <Row label="Total Annual Benefit" value={fmt(flipCalc.rentalTotalAnnual)} bold />
+                <div style={{ fontSize: 10, color: C.muted, fontStyle: "italic", marginTop: 6 }}>
+                  {flipCalc.yearsToMatchFlip < Infinity && flipCalc.yearsToMatchFlip > 0
+                    ? "Rental income would match the flip profit in about " + flipCalc.yearsToMatchFlip.toFixed(1) + " years, plus you keep the property."
+                    : flipCalc.rentalTotalAnnual <= 0
+                    ? "Negative rental returns \u2014 flipping may be the better strategy for this property."
+                    : "Rental builds long-term wealth through equity, appreciation, and tax benefits."}
+                </div>
+              </div>
+            </div>
+            <div style={{ background: C.bg, borderRadius: 8, padding: 12, marginTop: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.navy, marginBottom: 4 }}>Bottom Line</div>
+              <div style={{ fontSize: 12, color: C.text, lineHeight: 1.6 }}>
+                {flipCalc.afterTaxProfit > 0 && flipCalc.rentalTotalAnnual > 0
+                  ? "Both strategies are viable. Flipping nets " + fmt(flipCalc.afterTaxProfit) + " after tax in " + flipTimeline + " months. Renting generates " + fmt(flipCalc.rentalTotalAnnual) + "/year in combined cash flow and tax savings. " + (flipCalc.yearsToMatchFlip < 5 ? "The rental catches up in under 5 years and you still own the asset." : "The flip delivers faster returns, but rental builds long-term wealth.")
+                  : flipCalc.afterTaxProfit > 0
+                  ? "Flipping is the stronger play here. The rental numbers are tight, but the flip delivers " + fmt(flipCalc.afterTaxProfit) + " in " + flipTimeline + " months."
+                  : flipCalc.rentalTotalAnnual > 0
+                  ? "This property works better as a rental. The flip margin is too thin, but it generates " + fmt(flipCalc.rentalTotalAnnual) + "/year as a rental."
+                  : "Neither strategy looks strong with current numbers. Consider negotiating a lower purchase price or reducing rehab scope."}
+              </div>
+            </div>
+          </Card>
+          {/* Rehab Breakdown Modal */}
+          {showRehabBreakdown && (
+            <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+              onClick={e => { if (e.target === e.currentTarget) setShowRehabBreakdown(false); }}>
+              <div style={{ background: C.white, borderRadius: 16, width: "100%", maxWidth: 520, maxHeight: "80vh", overflow: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+                <div style={{ background: C.navy, padding: "14px 20px", borderRadius: "16px 16px 0 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: C.white }}>Renovation Cost Breakdown</span>
+                  <button onClick={() => setShowRehabBreakdown(false)} style={{ background: "none", border: "none", color: C.muted, fontSize: 20, cursor: "pointer", fontWeight: 700 }}>✕</button>
+                </div>
+                <div style={{ padding: "16px 20px" }}>
+                  <div style={{ fontSize: 12, color: C.muted, marginBottom: 12 }}>Itemize each renovation category. The total will update your Renovation Costs field.</div>
+                  {rehabItems.map((item, idx) => (
+                    <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                      <input type="text" value={item.name} onChange={e => updateRehabItem(idx, "name", e.target.value)}
+                        style={{ flex: 2, padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.ltBlue}`, fontSize: 12, outline: "none", fontFamily: "'Montserrat',sans-serif" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 2, flex: 1 }}>
+                        <span style={{ fontSize: 12, color: C.muted }}>$</span>
+                        <input type="number" value={item.cost} onChange={e => updateRehabItem(idx, "cost", parseFloat(e.target.value) || 0)}
+                          style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: `1px solid ${C.ltBlue}`, fontSize: 13, fontWeight: 700, color: C.mdBlue, textAlign: "right", outline: "none", fontFamily: "'Montserrat',sans-serif" }} />
+                      </div>
+                      <button onClick={() => removeRehabItem(idx)}
+                        style={{ background: "none", border: "none", color: C.red, fontSize: 16, cursor: "pointer", padding: "0 4px", fontWeight: 700 }}>✕</button>
+                    </div>
+                  ))}
+                  <button onClick={addRehabItem}
+                    style={{ width: "100%", padding: "6px 0", borderRadius: 6, border: `1px dashed ${C.ltBlue}`, background: "transparent", color: C.mdBlue, fontWeight: 600, fontSize: 11, cursor: "pointer", marginTop: 6 }}>
+                    + Add Line Item
+                  </button>
+                  <div style={{ borderTop: `2px solid ${C.navy}`, marginTop: 12, paddingTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: C.navy }}>Total</span>
+                    <span style={{ fontSize: 18, fontWeight: 800, color: C.navy, fontFamily: "'Space Mono',monospace" }}>{fmt(rehabTotal)}</span>
+                  </div>
+                  <button onClick={applyRehabTotal}
+                    style={{ width: "100%", padding: "10px 0", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${C.green}, #219a52)`, color: C.white, fontWeight: 700, fontSize: 14, cursor: "pointer", marginTop: 12 }}>
+                    Apply Total ({fmt(rehabTotal)}) to Rehab Budget
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>)}
+
+        {/* ═══ METRIC GUIDE TAB ═══ */}
+        {tab === "guide" && (<div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <Card title="Investment Metric Guide" accent={C.navy}>
+            <div style={{ fontSize: 13, color: C.text, padding: "8px 0 12px", lineHeight: 1.6 }}>Understanding these metrics is essential for evaluating rental properties. Each metric measures a different aspect of the investment. Use them together for a complete picture. Benchmarks below are adjustable to match your local market.</div>
+          </Card>
+          {[
+            { title: "Cap Rate (Capitalization Rate)", formula: "Net Operating Income \u00f7 Purchase Price", good: "capRateGood", strong: "capRateStrong", suffix: "%",
+              explain: "The cap rate tells you what percentage return the property generates on its total value, assuming you paid all cash. It strips out financing so you can compare properties on an equal basis.",
+              why: "A higher cap rate means more income per dollar of property value. However, higher cap rates often come with higher risk \u2014 properties in less desirable areas or needing more maintenance tend to have higher cap rates.",
+              example: "A $300,000 property with $15,000 NOI has a 5% cap rate. For every $100,000 invested, it generates $5,000 in annual operating income.",
+              local: "In the Philadelphia suburbs (MontCo, Chester, Bucks), cap rates for SFH typically range 4\u20137%. Anything above 5% is solid. Urban Philadelphia properties may offer 6\u20139% but with different risk profiles." },
+            { title: "Cash-on-Cash Return", formula: "Annual Cash Flow \u00f7 Total Cash Invested", good: "cocGood", strong: "cocStrong", suffix: "%",
+              explain: "This is your actual return on the money you personally invested \u2014 down payment, closing costs, and rehab. Unlike cap rate, it accounts for your mortgage, so it reflects the power of leverage.",
+              why: "This is arguably the most important metric for financed investors. A modest cap rate property can deliver strong cash-on-cash returns if leveraged well.",
+              example: "You invest $83,000 total cash and earn $6,640/year in cash flow after all expenses and mortgage. Your cash-on-cash return is 8.0%.",
+              local: "Most Philly-area investors target 8\u201312%. In the current interest rate environment (6.5\u20137.5%), achieving this often requires buying below market or adding value through renovation." },
+            { title: "Gross Rent Multiplier (GRM)", formula: "Purchase Price \u00f7 Gross Annual Rent", good: "grmGood", strong: "grmStrong", suffix: "",
+              explain: "GRM tells you how many years of gross rent it would take to equal the purchase price. It ignores expenses entirely \u2014 intentionally simple for quick screening.",
+              why: "Use GRM to quickly filter properties before doing full analysis. Lower GRM means the property is cheaper relative to rental income. Most useful when comparing similar properties in the same area.",
+              example: "A $300,000 home renting for $2,400/month ($28,800/year) has a GRM of 10.4 \u2014 about 10 years of gross rent to equal the price.",
+              local: "Philly suburbs typically show GRMs of 8\u201312 for SFH. Center city condos can be 12\u201315+. Anything under 7 in this market is rare and worth a close look." },
+            { title: "Debt Service Coverage (DSCR)", formula: "Net Operating Income \u00f7 Annual Mortgage Payments", good: "dscrGood", strong: "dscrStrong", suffix: "x", step: "0.05",
+              explain: "DSCR measures whether the property\u2019s income can cover its mortgage. A DSCR of 1.0 means income exactly equals debt. Above 1.0 means there\u2019s a cushion; below 1.0 means you\u2019re paying out of pocket.",
+              why: "Lenders use DSCR to approve loans. Most require 1.20x+. As an investor, you want 1.25x+ to handle vacancies and surprise repairs without going negative.",
+              example: "A property with $14,620 NOI and $19,161 annual mortgage has a DSCR of 0.76x \u2014 the rent doesn\u2019t cover the mortgage, requiring $378/month out of pocket.",
+              local: "DSCR lending is popular in the Philly market. These investor-specific loans qualify on the property\u2019s income rather than yours. Most require 1.20\u20131.25x minimum." },
+            { title: "1% Rule", formula: "Monthly Rent \u00f7 Purchase Price", good: "onePctPass", strong: "onePctStrong", suffix: "%", step: "0.1",
+              explain: "A quick screening test: can the property rent for at least 1% of its purchase price per month? A $300,000 home should rent for $3,000+ to pass.",
+              why: "Properties meeting the 1% rule tend to have positive cash flow. Those below it can still work if you\u2019re counting on appreciation, tax benefits, or below-market acquisition.",
+              example: "A $300,000 property at $2,400/month = 0.8%. Common in Philly suburbs where prices are high relative to rents.",
+              local: "Extremely hard to meet in MontCo and Chester counties (most fall 0.6\u20130.85%). Consider lowering to 0.7\u20130.8%. More achievable in Norristown, Pottstown, or North Philadelphia." },
+            { title: "50% Rule", formula: "Operating Expenses \u00f7 Gross Annual Income", good: "fiftyRuleMax", strong: "fiftyRuleMax", suffix: "%", single: true,
+              explain: "A rule of thumb: roughly half your gross rental income will go to operating expenses (not including mortgage). Covers taxes, insurance, maintenance, management, vacancy, and capital expenditures.",
+              why: "Quick mental math tool. If rent is $2,400/month, expect ~$1,200 in expenses, leaving $1,200 for mortgage and cash flow. Below 50% is efficient; above 50%, investigate why.",
+              example: "A property with $30,000 gross income and $13,880 operating expenses has a 46% ratio \u2014 under 50%, which is healthy.",
+              local: "PA\u2019s property taxes and older housing stock can push ratios higher than national averages. Budget 10\u201312% for maintenance on pre-1980 homes vs 5\u20138% for newer." },
+            { title: "Monthly Cash Flow", formula: "Monthly NOI \u2212 Monthly Mortgage Payment", good: "cfGood", strong: "cfStrong", suffix: "", prefix: "$",
+              explain: "The most tangible metric \u2014 actual dollars in your bank account each month after every expense and mortgage payment. Money you can spend, save, or reinvest.",
+              why: "Positive means the property pays for itself. Negative means you\u2019re subsidizing it monthly. Even experienced investors avoid negative cash flow unless they have a clear value-add thesis.",
+              example: "After $2,400 rent, $1,157 expenses, and $1,597 mortgage = -$354/month negative cash flow.",
+              local: "Many Philly-area SFH show thin or negative cash flow in the current rate environment. Investors here often accept $0\u2013100/month and rely on equity buildup, appreciation, and tax benefits." },
+            { title: "Break-Even Ratio", formula: "(Expenses + Mortgage) \u00f7 Gross Income", good: "beGood", strong: "beStrong", suffix: "%",
+              explain: "Tells you what percentage of full occupancy you need just to cover all costs. An 85% ratio means you can afford about 6 weeks of vacancy per year.",
+              why: "Reveals how much cushion you have. Lower is better \u2014 more room for vacancies, turnover, and slow periods.",
+              example: "If expenses + mortgage = $33,041 and gross income = $30,000, the ratio is 110% \u2014 even at full occupancy you can\u2019t cover costs.",
+              local: "Target below 85% for Philly suburbs. Rental market here is strong (3\u20135% vacancy for maintained SFH), so the bigger risk is usually turnover costs, not extended vacancies." },
+          ].map(m => (
+            <Card key={m.title} title={m.title} accent={C.dkBlue}>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <div style={{ flex: "2 1 350px" }}>
+                  <div style={{ background: C.softBlue, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: C.mdBlue }}>Formula: </span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.navy, fontFamily: "'Space Mono',monospace" }}>{m.formula}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.text, lineHeight: 1.7, marginBottom: 8 }}><strong>What it measures:</strong> {m.explain}</div>
+                  <div style={{ fontSize: 12, color: C.text, lineHeight: 1.7, marginBottom: 8 }}><strong>Why it matters:</strong> {m.why}</div>
+                  <div style={{ background: C.bg, borderRadius: 8, padding: "8px 12px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.navy, marginBottom: 2 }}>Example</div>
+                    <div style={{ fontSize: 11, color: C.text, lineHeight: 1.6 }}>{m.example}</div>
+                  </div>
+                  <div style={{ background: C.goldBg, borderRadius: 8, padding: "8px 12px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.gold, marginBottom: 2 }}>Philadelphia Metro Context</div>
+                    <div style={{ fontSize: 11, color: C.text, lineHeight: 1.6 }}>{m.local}</div>
+                  </div>
+                </div>
+                <div style={{ flex: "1 1 160px", minWidth: 160 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.mdBlue, marginBottom: 6 }}>Adjust Benchmarks</div>
+                  {m.single ? (
+                    <Inp label="Maximum" value={benchmarks[m.good]} onChange={v=>updateBench(m.good,v)} suffix={m.suffix} prefix={m.prefix} step={m.step} />
+                  ) : (<>
+                    <Inp label="Good" value={benchmarks[m.good]} onChange={v=>updateBench(m.good,v)} suffix={m.suffix} prefix={m.prefix} step={m.step} />
+                    <Inp label="Strong" value={benchmarks[m.strong]} onChange={v=>updateBench(m.strong,v)} suffix={m.suffix} prefix={m.prefix} step={m.step} />
+                  </>)}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>)}
+
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(App));
+
+</script>
+</body>
+</html>
